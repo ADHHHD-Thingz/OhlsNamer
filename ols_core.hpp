@@ -567,7 +567,12 @@ inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory&
   bool found = false;
   bool bestHasM3 = false;
   size_t bestTrailing = n + 1;
-  for (size_t p = 12; p + 4 <= n; ++p) {
+  // The version-directory marker belongs to the serialized project header,
+  // before the embedded ROM/version array. Scanning an entire multi-megabyte
+  // ROM for marker-shaped bytes is both slow and prone to false dispatch.
+  // Real corpus samples place M1 well inside this bounded header region.
+  const size_t searchEnd = std::min<size_t>(n, 8u * 1024u * 1024u);
+  for (size_t p = 12; p + 4 <= searchEnd; ++p) {
     if (rd32(d, p) != 0x42007899u) continue;
     const uint32_t countMinusOne = rd32(d, p - 12);
     const uint32_t start = rd32(d, p - 8);
