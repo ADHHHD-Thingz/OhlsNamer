@@ -187,6 +187,40 @@ inline void analyzeAll(Scan& sc, std::atomic<bool>& cancel,
 
 // Same rules as withFinalNames() in the web app: per folder, names of files that
 // are not going to be renamed (other files, folders, unreadable projects) stay reserved.
+inline ws preserveOriginalNameForPartialIdentity(const Item& it) {
+  const auto& a = it.a;
+  if (!ols::isUnknownNamePart(a.brand) && !ols::isUnknownNamePart(a.model) &&
+      !ols::isUnknownNamePart(a.ecu))
+    return a.proposed;
+
+  ws originalStem = it.name;
+  if (endsWithOls(originalStem)) originalStem.resize(originalStem.size() - 4);
+  ws normalizedOriginal = ols::lower(ols::jsTrim(originalStem));
+  if (normalizedOriginal.empty() || normalizedOriginal == L"project" ||
+      normalizedOriginal == L"unknown" || normalizedOriginal == L"ols project" ||
+      normalizedOriginal == L"untitled" || normalizedOriginal == L"new project")
+    return a.proposed;
+
+  // The parser cannot reliably assign words in an existing filename to missing
+  // metadata slots. Keep the complete original stem as a labelled fallback
+  // rather than silently replacing it with an "Unknown" component.
+  ws proposed = a.proposed;
+  size_t suffixAt = proposed.rfind(L" (");
+  if (suffixAt == ws::npos || proposed.size() < 5 ||
+      ols::lower(proposed.substr(proposed.size() - 4)) != L".ols")
+    return a.proposed;
+  ws base = proposed.substr(0, suffixAt);
+  ws suffix = proposed.substr(suffixAt);
+  ws fallback = ols::filenamePart(originalStem);
+  if (fallback.empty()) return a.proposed;
+  if (base.empty()) base = fallback;
+  else if (ols::lower(base) != ols::lower(fallback)) base += L" [" + fallback + L"]";
+  const size_t maxBase = 240 > suffix.size() ? 240 - suffix.size() : 1;
+  if (base.size() > maxBase) base.resize(maxBase);
+  while (!base.empty() && (base.back() == L' ' || base.back() == L'.')) base.pop_back();
+  return base + suffix;
+}
+
 inline void computeFinal(Scan& sc) {
   std::map<ws, std::vector<size_t>> groups;
   for (size_t i = 0; i < sc.items.size(); i++) groups[ols::lower(sc.items[i].dir)].push_back(i);
@@ -197,9 +231,13 @@ inline void computeFinal(Scan& sc) {
     for (size_t i : g.second) {
       Item& it = sc.items[i];
       if (!it.a.ok) continue;
+      it.a.proposed = preserveOriginalNameForPartialIdentity(it);
       it.finalName = ols::disambiguate(it.a.proposed, taken);
       it.willRename = it.a.renameSafe && it.finalName != it.name;
       if (!it.a.renameSafe) it.status = L"Review only - not renamed automatically";
+      else if (ols::isUnknownNamePart(it.a.brand) || ols::isUnknownNamePart(it.a.model) ||
+               ols::isUnknownNamePart(it.a.ecu))
+        it.status = L"Partial identity; original filename retained in proposal";
       else if (!it.willRename) it.status = L"Already named";
     }
   }
