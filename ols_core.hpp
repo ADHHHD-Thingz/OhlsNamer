@@ -922,7 +922,7 @@ inline ws scanEmbeddedHexFilename(const uint8_t* d,size_t n) {
       for(const auto& ext:exts) {
       if(i+ext.size()>run.size()||lower(run.substr(i,ext.size()))!=ext)continue;
       size_t b=i;while(b>0&&((run[b-1]>=L'a'&&run[b-1]<=L'z')||(run[b-1]>=L'A'&&run[b-1]<=L'Z')||(run[b-1]>=L'0'&&run[b-1]<=L'9')||run[b-1]==L'_'||run[b-1]==L' '||run[b-1]==L'('||run[b-1]==L')'||run[b-1]==L'.'||run[b-1]==L'+'||run[b-1]==L'-'||run[b-1]==L'\\'||run[b-1]==L'/'))--b;
-      ws base=run.substr(b,i+ext.size()-b);size_t sep=base.find_last_of(L"\\/");if(sep!=ws::npos)base=base.substr(sep+1);
+      ws base=jsTrim(run.substr(b,i+ext.size()-b));size_t sep=base.find_last_of(L"\\/");if(sep!=ws::npos)base=base.substr(sep+1);
       ws stem=softwareStemFromSourceFilename(base);if(stem.empty())continue;
       int score=1+(stem.find_first_of(L"0123456789")!=ws::npos?2:0)+(stem.find_first_of(L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")!=ws::npos?1:0);
       candidates.push_back({score,base});
