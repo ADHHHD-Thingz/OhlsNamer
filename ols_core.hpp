@@ -1027,9 +1027,26 @@ inline ws selectSourceFilename(const ws& original,const ws& scanned) {
 inline ws inferEcuFamily(const uint8_t* d,size_t n) {
   ws text=decode(d,n);
   static const std::wregex re(LR"(\b(?:ME|MED|EDC|DCM|SID|SIMOS|MD1|MG1|EMS|PCR|PSG|DCU|MSS|DDE|MSD|MSV|MJD|IAW|MOTRONIC|KEFICO|TRANSTRON|KEIHIN|DENSO|TEMIC)\s*[-.]?\s*[A-Z0-9]{1,8}(?:[.-][A-Z0-9]{1,8}){0,3}\b)",std::regex::ECMAScript|std::regex::icase);
-  std::vector<ws> v;for(std::wsregex_iterator it(text.begin(),text.end(),re),end;it!=end;++it){ws x=jsTrim((*it)[0].str());if(x.size()>=4&&x.size()<=32)v.push_back(x);}
-  std::sort(v.begin(),v.end(),[](const ws&a,const ws&b){return a.size()<b.size();});
-  return v.empty()?ws():v.front();
+  struct Hit { ws value; size_t offset; int score; };
+  std::vector<Hit> hits;
+  for(std::wsregex_iterator it(text.begin(),text.end(),re),end;it!=end;++it) {
+    ws x=jsTrim((*it)[0].str());
+    // Reject alphabetic prose such as German "Meine", which can match the "ME" prefix.
+    if(x.size()<4||x.size()>32||x.find_first_of(L"0123456789")==ws::npos)continue;
+    ws nrm=lower(x);
+    int score=10;
+    if(nrm.find(L'.')!=ws::npos)score+=4;
+    if(nrm.find(L'-')!=ws::npos)score+=1;
+    static const std::vector<ws> prefixes={L"motronic",L"transtron",L"kefico",L"simos",L"keihin",L"denso",L"temic",L"med",L"edc",L"dcm",L"sid",L"md1",L"mg1",L"ems",L"pcr",L"psg",L"dcu",L"mss",L"dde",L"msd",L"msv",L"mjd",L"iaw",L"me"};
+    for(const auto& prefix:prefixes)if(nrm.rfind(prefix,0)==0){score+=(int)prefix.size();break;}
+    hits.push_back({x,(size_t)(*it).position(),score});
+  }
+  std::sort(hits.begin(),hits.end(),[](const Hit&a,const Hit&b) {
+    if(a.score!=b.score)return a.score>b.score;
+    if(a.offset!=b.offset)return a.offset<b.offset;
+    return a.value.size()>b.value.size();
+  });
+  return hits.empty()?ws():hits.front().value;
 }
 inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   Analysis a;

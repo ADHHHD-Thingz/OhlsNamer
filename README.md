@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.3.1
+# OhlsNamer (OLS Renamer) — v1.3.2
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
@@ -23,12 +23,13 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 - Cancelable scan
 - Double-click a project to inspect parsed header fields, identity sources, map evidence and warnings
 
-## Version 1.3.1
+## Version 1.3.2
 
 - Added a broad vehicle-brand and ECU-manufacturer catalogue, alias normalization, and ECU-family manufacturer inference.
 - Added embedded HEX/BIN filename fallback for unidentified software metadata, including ANSI and UTF-16LE filename strings.
 - Used the selected source filename for vehicle-brand and ECU-manufacturer inference when the dedicated original-file field is missing or invalid.
 - Expanded vehicle and ECU-supplier catalogues and added common filename aliases such as VW and Mercedes-Benz.
+- Filtered alphabetic prose false positives from ECU-family detection and ranked numeric family candidates by specificity and source order.
 - Exposed additional identification factors through the parser and CLI.
 - Added header/size validity states, filename length limits, safer automatic rename eligibility and checked log writes.
 

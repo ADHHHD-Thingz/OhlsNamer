@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2
+
+- Fixed ECU-family detection accepting alphabetic prose such as "Meine" as a valid "ME" family and consequently inferring Bosch incorrectly.
+- ECU-family candidates must contain digits; dotted/structured family identifiers receive higher confidence, with source position used as a deterministic tie-breaker.
+- Added a regression test using "Meine Kennfelder ME7910 ME7.9.10".
+
 ## 1.3.1
 
 - Fixed source-filename inference ordering: when the dedicated original-file field is absent or unusable, the scanned embedded HEX/BIN filename now informs vehicle-brand and ECU-manufacturer inference as well as software fallback.

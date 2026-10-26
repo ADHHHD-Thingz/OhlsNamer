@@ -14,6 +14,10 @@ int main() {
   assert(identifyEcuManufacturer(L"Continental Automotive") == L"Continental");
   assert(inferEcuManufacturerFromFamily(L"EDC17C46") == L"Bosch");
   assert(inferEcuManufacturerFromFamily(L"SIMOS 18.1") == L"Continental");
+  const std::string familyNoise="Meine Kennfelder ME7910 ME7.9.10";
+  Bytes familyBytes(familyNoise.begin(),familyNoise.end());
+  assert(inferEcuFamily(familyBytes.data(),familyBytes.size())==L"ME7.9.10");
+  assert(inferEcuManufacturerFromFamily(inferEcuFamily(familyBytes.data(),familyBytes.size()))==L"Bosch");
   assert(identifyEcuManufacturer(L"Hella Automotive") == L"Hella");
   assert(identifyEcuManufacturer(L"Hyundai Kefico") == L"Hyundai Kefico");
   assert(softwareStemFromSourceFilename(L"C:\\\\ROMs\\\\ori_Alfa_1.4T_510422.bin") == L"ori_Alfa_1.4T_510422");
