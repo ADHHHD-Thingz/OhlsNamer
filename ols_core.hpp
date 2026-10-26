@@ -893,7 +893,13 @@ inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
 inline ws softwareStemFromSourceFilename(const ws& raw) {
   ws name=jsTrim(raw);size_t slash=name.find_last_of(L"\\/");
   if(slash!=ws::npos)name=name.substr(slash+1);
-  size_t dot=name.find_last_of(L'.');if(dot!=ws::npos)name.resize(dot);
+  size_t dot=name.find_last_of(L'.');
+  if(dot!=ws::npos) {
+    ws ext=lower(name.substr(dot));
+    static const std::set<ws> allowed={L".bin",L".hex",L".rom",L".mot",L".s19",L".srec",L".ori",L".eep",L".epr",L".dat",L".frf",L".sgo",L".odx",L".vbf",L".flash"};
+    if(!allowed.count(ext))return L"";
+    name.resize(dot);
+  }
   name=jsTrim(name);if(name.empty()||name.size()>120)return L"";
   ws n=lower(name);
   static const std::set<ws> generic={L"original",L"stock",L"unknown",L"dump",L"read",L"hex",L"hexdump",L"rom",L"flash",L"project",L"software",L"sw"};
@@ -953,8 +959,10 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   ws explicitEcu=firstFilled({get("ecu_name")});ws inferredEcu=explicitEcu.empty()?inferEcuFamily(d,n):ws();
   ws ecu=!explicitEcu.empty()?explicitEcu:(!inferredEcu.empty()?inferredEcu:ws(L"Unknown"));
   ws ecuManufacturer=identifyEcuManufacturer(get("manufacturer"));if(ecuManufacturer==L"Unknown")ecuManufacturer=inferEcuManufacturerFromFamily(ecu);
-  ws original=get("original_file_name");ws embedded=scanEmbeddedHexFilename(d,n);
-  ws embeddedStem=softwareStemFromSourceFilename(embedded);if(embeddedStem.empty())embeddedStem=softwareStemFromSourceFilename(original);
+  ws original=get("original_file_name");
+  // Prefer the dedicated original-source filename field; scan binary strings only as fallback.
+  ws embedded=softwareStemFromSourceFilename(original).empty()?scanEmbeddedHexFilename(d,n):original;
+  ws embeddedStem=softwareStemFromSourceFilename(embedded);
   ws metadataSoftware=firstFilled({get("sw_number")});ws lowSw=lower(metadataSoftware);
   bool generic=metadataSoftware.empty()||lowSw==L"unknown"||lowSw==L"n/a"||lowSw==L"none"||lowSw==L"not available"||lowSw==L"not identified"||lowSw==L"original"||lowSw==L"stock"||lowSw==L"dump"||lowSw==L"hex"||lowSw==L"rom"||lowSw==L"software"||lowSw==L"sw"||lowSw==L"-"||lowSw==L"?"||lowSw==L"%"||lowSw==lower(ecu);
   bool boschPart=std::regex_match(metadataSoftware,std::wregex(L"(0261S[0-9]{5}|0281[0-9]{6})",std::regex::ECMAScript|std::regex::icase))&&lower(ecuManufacturer).find(L"bosch")!=ws::npos;
