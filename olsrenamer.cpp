@@ -223,6 +223,7 @@ static LRESULT onNotify(LPNMHDR nh) {
         L"\nHeader complete: " + ws(a.headerComplete ? L"yes" : L"no") +
         L"\nDeclared size consistent: " + ws(a.formatSizeConsistent ? L"yes" : L"no") +
         L"\n\nVehicle brand: " + a.brand +
+        L"\nBrand source: " + a.brandSource +
         L"\nVehicle model: " + a.model +
         L"\nVehicle year: " + a.vehicleYear +
         L"\nEngine code: " + a.engineCode +
