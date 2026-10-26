@@ -35,6 +35,7 @@ struct Item {
 
 struct Scan {
   ws root;
+  ws journalPath;
   std::vector<Item> items;
   std::map<ws, std::set<ws>> names;  // lower(dir) -> lower(entry names), files and folders
 };
@@ -199,6 +200,33 @@ inline size_t renameCount(const Scan& sc) {
   return n;
 }
 
+inline bool writeRecoveryJournal(const Scan& sc, ws& outPath) {
+  SYSTEMTIME t; GetLocalTime(&t);
+  wchar_t stamp[64];
+  swprintf(stamp, 64, L"%04d-%02d-%02d %02d%02d%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+  auto quote=[](const ws& v){ws q=L"\"";for(wchar_t c:v){if(c==L'\"')q+=L'\"';q+=c;}return q+L"\"";};
+  ws text=L"Source,Target,Status\r\n";
+  for(const auto& it:sc.items) if(it.willRename&&!it.renamed)
+    text+=quote(it.path())+L","+quote(it.dir+L"\\"+it.finalName)+L",planned\r\n";
+  std::string bytes="\\xEF\\xBB\\xBF"+ols::utf8(text);
+  ws prefix=sc.root; if(!prefix.empty()&&prefix.back()!=L'\\')prefix+=L"\\";
+  for(int attempt=1;attempt<=100;++attempt) {
+    outPath=prefix+L"OLS Renamer recovery plan "+stamp+(attempt==1?ws():L" "+std::to_wstring(attempt))+L".csv";
+    HANDLE h=CreateFileW(outPath.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(h==INVALID_HANDLE_VALUE) {DWORD e=GetLastError();if(e==ERROR_FILE_EXISTS||e==ERROR_ALREADY_EXISTS)continue;outPath.clear();return false;}
+    size_t offset=0;bool ok=true;
+    while(offset<bytes.size()) {
+      DWORD wrote=0;DWORD want=(DWORD)std::min<size_t>(bytes.size()-offset,1<<20);
+      if(!WriteFile(h,bytes.data()+offset,want,&wrote,nullptr)||wrote==0){ok=false;break;}
+      offset+=wrote;
+    }
+    ok=FlushFileBuffers(h)&&ok;ok=CloseHandle(h)&&ok;
+    if(!ok){DeleteFileW(outPath.c_str());outPath.clear();return false;}
+    return true;
+  }
+  outPath.clear();return false;
+}
+
 // Renames in passes so chains (A->B while B->C) work; breaks swaps through a temp name.
 inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progress) {
   struct P {
@@ -227,6 +255,47 @@ inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progr
     progress(finished, total);
   };
   progress(0, total);
+  if (total) {
+    std::set<ws> movingSources;
+    for (const auto& p : pend) movingSources.insert(ols::lower(p.cur));
+    ws preflightError;
+    for (const auto& p : pend) {
+      const Item& it=sc.items[p.idx];
+      if (GetFileAttributesW(p.cur.c_str())==INVALID_FILE_ATTRIBUTES) {
+        preflightError=L"source file changed or disappeared before rename: "+p.cur;break;
+      }
+      ws target=it.dir+L"\\"+it.finalName;
+      DWORD attr=GetFileAttributesW(target.c_str());
+      if(attr!=INVALID_FILE_ATTRIBUTES && !movingSources.count(ols::lower(target)) && ols::lower(target)!=ols::lower(p.cur)) {
+        preflightError=L"target already exists: "+target;break;
+      }
+      if(attr==INVALID_FILE_ATTRIBUTES) {
+        DWORD e=GetLastError();
+        if(e!=ERROR_FILE_NOT_FOUND&&e!=ERROR_PATH_NOT_FOUND) {preflightError=L"cannot validate target: "+target+L" ("+lastError(e)+L")";break;}
+      }
+    }
+    if(!preflightError.empty()) {
+      for(auto& p:pend) if(!p.done) finish(p,false,L"preflight failed; no files were moved: "+preflightError);
+      return;
+    }
+    if(!writeRecoveryJournal(sc,sc.journalPath)) {
+      for(auto& p:pend) if(!p.done) finish(p,false,L"recovery plan could not be written; no files were moved");
+      return;
+    }
+  }
+  // Case-only renames need a temporary path on case-insensitive filesystems.
+  for(auto& p:pend) {
+    if(p.done) continue;
+    Item& it=sc.items[p.idx];ws target=it.dir+L"\\"+it.finalName;
+    if(ols::lower(target)==ols::lower(p.cur)&&target!=p.cur) {
+      ws tmp;
+      for(int attempt=1;attempt<=100;++attempt) {
+        tmp=it.dir+L"\\~olsrenamer-"+std::to_wstring(GetCurrentProcessId())+L"-case-"+std::to_wstring(++tmpCounter)+L".tmp";
+        if(GetFileAttributesW(tmp.c_str())==INVALID_FILE_ATTRIBUTES&&MoveFileExW(p.cur.c_str(),tmp.c_str(),0)) {p.cur=tmp;break;}
+        if(attempt==100) finish(p,false,L"could not create temporary path for case-only rename");
+      }
+    }
+  }
   for (size_t guard = 0; guard < total + 8 && finished < total; guard++) {
     bool any = false;
     std::set<ws> pendingCur;
@@ -269,12 +338,18 @@ inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progr
       }
     }
   }
-  for (auto& p : pend) {  // anything left (unresolvable): put parked files back and report
+  for (auto& p : pend) {  // anything left (unresolvable): restore parked files and report failures.
     if (p.done) continue;
     Item& it = sc.items[p.idx];
-    ws orig = it.path();
-    if (ols::lower(p.cur) != ols::lower(orig)) MoveFileExW(p.cur.c_str(), orig.c_str(), 0);
-    finish(p, false, L"a file with that name already exists");
+    ws orig = it.dir + L"\\" + it.originalName;
+    if (ols::lower(p.cur) != ols::lower(orig)) {
+      if (!MoveFileExW(p.cur.c_str(), orig.c_str(), 0)) {
+        ws recoveryPath=p.cur;
+        finish(p,false,L"ROLLBACK FAILED; file remains at "+recoveryPath+L" ("+lastError(GetLastError())+L")");
+        continue;
+      }
+    }
+    finish(p, false, L"a file with that name already exists; parked file restored");
   }
 }
 
