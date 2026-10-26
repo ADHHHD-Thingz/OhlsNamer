@@ -442,6 +442,8 @@ struct MapRow {
   bool defined = false;
 };
 
+struct MapDetail { ws name, description; bool defined = false; };
+
 struct Analysis {
   bool ok = false, headerComplete = false, formatSizeConsistent = true, renameSafe = false;
   ws error;
@@ -451,6 +453,7 @@ struct Analysis {
   ws ecuManufacturer = L"Unknown", hardwareNumber, productionNumber, engineCode, vehicleYear;
   ws originalFileName, embeddedHexFilename, softwareSource = L"unknown", ecuSource = L"unknown";
   std::vector<std::pair<ws, ws>> metadata;
+  std::vector<MapDetail> mapDetails;
   size_t mapCount = 0;
   int definedCount = 0, skippedCount = 0;
   ws proposed;
@@ -984,7 +987,11 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   a.engineCode=get("engine_code");a.vehicleYear=get("year");a.originalFileName=original;a.embeddedHexFilename=embedded;
   a.softwareSource=software.empty()?L"unknown":(useFallback?L"embedded hex filename":L"metadata");
   a.ecuSource=!explicitEcu.empty()?L"metadata":(!inferredEcu.empty()?L"inferred from project text":L"unknown");
-  a.mapCount=ex.maps.size();for(const auto&m:ex.maps)if(m.defined)a.definedCount++;
+  a.mapCount=ex.maps.size();
+  for(const auto&m:ex.maps) {
+    if(m.defined)a.definedCount++;
+    a.mapDetails.push_back({m.name,m.description,m.defined});
+  }
   a.skippedCount=(int)ex.maps.size()-a.definedCount;a.mapSource=ex.source;
   a.proposed=proposedFilename(brand,model,ecu,software,a.definedCount);
   a.renameSafe=a.headerComplete&&a.formatSizeConsistent&&!rawBrand.empty()&&!get("model").empty()&&!explicitEcu.empty()&&(ex.source=="map directory"||ex.source=="compressed map directory");
