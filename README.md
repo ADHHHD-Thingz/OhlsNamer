@@ -35,6 +35,16 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 
 The catalogue is extensible, not literally exhaustive; unrecognized names are preserved rather than discarded.
 
+## OLS format investigation
+
+The naming parser is intentionally conservative and is **not** a complete OLS decoder. An independently developed, zero-clause-licensed C parser is vendored under `third_party/ols-parser-public/` for deeper inspection of metadata, version/ROM segments, maps, axes and cell layout.
+
+- [OLS format research notes](docs/OLS-FORMAT-RESEARCH.md) distinguish observed structure from inferred or unknown semantics.
+- CI compiles both parsers.
+- The private AI-Dump corpus workflow is used for real-project validation.
+
+This is a reverse-engineered, version-dependent format, not an official EVC specification. We do not claim every reserved byte or flag bit is understood.
+
 ## Building
 
 ### On Linux / WSL (cross-compile to Windows)
