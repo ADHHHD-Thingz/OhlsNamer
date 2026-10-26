@@ -344,6 +344,21 @@ inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progr
                      ? ws(L"a file with that name already exists")
                      : lastError(e);
         pendingCur.erase(ols::lower(p.cur));
+        // If this item was parked under a temporary name, restore it before reporting failure.
+        if (ols::lower(p.cur) != ols::lower(it.path())) {
+          ws originalPath=it.dir+L"\\"+it.originalName;
+          if (MoveFileExW(p.cur.c_str(),originalPath.c_str(),0)) {
+            p.cur=originalPath;
+          } else {
+            DWORD rollbackError=GetLastError();
+            msg+=L"; ROLLBACK FAILED; file remains at "+p.cur+L" ("+lastError(rollbackError)+L")";
+            ws recoveryPath=p.cur;
+            size_t slash=recoveryPath.find_last_of(L"\\/");
+            it.name=slash==ws::npos?recoveryPath:recoveryPath.substr(slash+1);
+            size_t relSlash=it.rel.find_last_of(L"\\/");
+            it.rel=(relSlash==ws::npos?ws():it.rel.substr(0,relSlash+1))+it.name;
+          }
+        }
         finish(p, false, msg);
         any = true;
       }
