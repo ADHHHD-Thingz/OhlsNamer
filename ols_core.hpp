@@ -602,6 +602,10 @@ inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory&
       out.dataStart = start;
       out.recordSize = recordSize;
       out.endOffset = (size_t)end64;
+      // A corroborated M3 directory whose record array ends exactly at EOF is
+      // the strongest available structural match. Stop here instead of scanning
+      // megabytes of embedded ROM bytes for further marker collisions.
+      if (hasM3 && trailing == 0) return true;
     }
   }
   return found;
