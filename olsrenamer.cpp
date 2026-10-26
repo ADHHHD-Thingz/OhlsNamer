@@ -240,6 +240,10 @@ static LRESULT onNotify(LPNMHDR nh) {
         L"\nMap extraction source: " + ols::fromAscii(a.mapSource.c_str()) +
         L"\nAutomatic rename safe: " + ws(a.renameSafe ? L"yes" : L"no") +
         L"\n\nProposed filename: " + a.proposed;
+      if (!a.metadata.empty()) {
+        details += L"\n\nParsed header fields:";
+        for (const auto& field : a.metadata) details += L"\n" + field.first + L": " + field.second;
+      }
       if (!a.warnings.empty()) {
         details += L"\n\nWarnings:";
         for (const auto& w : a.warnings) details += L"\n- " + w;
