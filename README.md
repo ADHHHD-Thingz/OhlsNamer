@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.3.2
+# OhlsNamer (OLS Renamer) — v1.3.3
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
@@ -22,6 +22,12 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 - Drag-and-drop a folder or file onto the window
 - Cancelable scan
 - Double-click a project to inspect parsed header fields, identity sources, map evidence and warnings
+
+## Version 1.3.3
+
+- Validates the M1 embedded-ROM version directory and uses its data-start offset to bound map-marker scanning, preventing marker-like bytes in ROM/version payloads from being dispatched as map records.
+- Exposes validated version count, record size, and data start in CLI diagnostics.
+- Adds regression tests for invalid version-array dimensions and fake map markers inside ROM bytes.
 
 ## Version 1.3.2
 
