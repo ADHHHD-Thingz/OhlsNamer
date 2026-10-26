@@ -1,0 +1,110 @@
+name: Publish OhlsNamer release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ohlsnamer-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid VERSION: $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this version is already released
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${{ steps.version.outputs.tag }} already exists; preserving the published release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build dependencies
+        if: steps.existing.outputs.exists != 'true'
+        run: sudo apt-get update && sudo apt-get install -y g++ gcc zlib1g-dev g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libz-mingw-w64-dev zip
+
+      - name: Compile CLI and run regression tests
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Wpedantic core_cli.cpp -lz -o core_cli
+          g++ -std=c++17 -Wall -Wextra -Wpedantic core_tests.cpp -lz -o core_tests
+          ./core_tests
+
+      - name: Run ASan and UBSan regression tests
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -fsanitize=address,undefined -fno-omit-frame-pointer core_tests.cpp -lz -o core_tests_sanitized
+          ASAN_OPTIONS=detect_leaks=1 ./core_tests_sanitized
+
+      - name: Compile independent OLS reference parser
+        if: steps.existing.outputs.exists != 'true'
+        run: gcc -std=c99 -Wall -Wextra -Wpedantic -D_POSIX_C_SOURCE=200809L third_party/ols-parser-public/ols.c third_party/ols-parser-public/ols_dump.c -lm -o ols_dump
+
+      - name: Build Windows x64 GUI
+        if: steps.existing.outputs.exists != 'true'
+        run: sh ./build.sh
+
+      - name: Package executable and checksum
+        if: steps.existing.outputs.exists != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          printf '%s  %s\n' "$(sha256sum 'OLS Renamer.exe' | cut -d ' ' -f 1)" 'OLS Renamer.exe' > SHA256SUMS.txt
+          zip -j "OhlsNamer-v${VERSION}-windows-x64.zip" "OLS Renamer.exe" SHA256SUMS.txt
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          version = os.environ["VERSION"]
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          heading = f"## {version}"
+          start = changelog.find(heading)
+          if start < 0:
+              raise SystemExit(f"CHANGELOG.md has no {heading!r} section")
+          start += len(heading)
+          end = changelog.find("\n## ", start)
+          notes = changelog[start:end if end >= 0 else None].strip()
+          Path("release-notes.md").write_text(
+              f"OhlsNamer v{version} for Windows x64.\n\n{notes}\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Create GitHub release
+        if: steps.existing.outputs.exists != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: OhlsNamer v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            OhlsNamer-v${{ steps.version.outputs.version }}-windows-x64.zip
+            SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          make_latest: true
