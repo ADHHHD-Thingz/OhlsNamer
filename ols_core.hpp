@@ -476,19 +476,30 @@ inline bool isUnknownNamePart(const ws& raw) {
 inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, const ws& software,
                            int definedMaps) {
   ws prefix;
+  std::set<ws> seenParts;
   auto appendPart = [&](const ws& raw) {
     if (isUnknownNamePart(raw)) return;
     ws part = filenamePart(raw);
     if (part.empty() || lower(part) == L"unknown") return;
+    // Compare normalized words, so separators/case changes cannot duplicate a slot.
+    ws key = catalogNorm(part);
+    if (key.empty() || seenParts.count(key)) return;
+    // Avoid adding a shorter slot already present as a complete phrase in the name.
+    ws prefixKey = L" " + catalogNorm(prefix) + L" ";
+    ws phrase = L" " + key + L" ";
+    if (!prefix.empty() && prefixKey.find(phrase) != ws::npos) {
+      seenParts.insert(key);
+      return;
+    }
     if (!prefix.empty()) prefix += L" ";
     prefix += part;
+    seenParts.insert(key);
   };
   appendPart(brand);
   appendPart(model);
   appendPart(ecu);
   ws sw = firstFilled({software});
-  if (!sw.empty() && (isUnknownNamePart(ecu) || lower(filenamePart(sw)) != lower(filenamePart(ecu))))
-    appendPart(sw);
+  if (!sw.empty()) appendPart(sw);
   if (prefix.empty()) prefix = L"OLS Project";
   ws countLabel = definedMaps == 0 ? ws(L"Nil") : std::to_wstring(definedMaps);
   ws suffix = L" (" + countLabel + L").ols";
@@ -1064,6 +1075,62 @@ inline ws softwareStemFromSourceFilename(const ws& raw) {
   static const std::set<ws> generic={L"original",L"stock",L"unknown",L"dump",L"read",L"hex",L"hexdump",L"rom",L"flash",L"project",L"software",L"sw"};
   return generic.count(n)?ws():name;
 }
+// A source dump filename is not automatically a software version. Only promote a
+// standalone, version-like identifier from the basename; descriptive folder/vendor
+// names (e.g. "TuneCenter") and vehicle/engine marketing text are not SW numbers.
+inline ws softwareVersionFromSourceFilename(const ws& raw, const ws& brand = L"",
+                                            const ws& model = L"", const ws& ecu = L"") {
+  ws stem = softwareStemFromSourceFilename(raw);
+  if (stem.empty()) return L"";
+  auto identity = [&](const ws& token) {
+    ws t = catalogNorm(token);
+    if (t.empty()) return false;
+    for (const ws& part : {brand, model, ecu}) {
+      ws p = catalogNorm(part);
+      if (!p.empty() && t == p) return true;
+    }
+    return false;
+  };
+  static const std::set<ws> junk = {
+    L"ori",L"original",L"stock",L"read",L"dump",L"tune",L"tuned",L"tuning",
+    L"tunecenter",L"tune center",L"tuningcenter",L"tuning center",L"tuningfiles",
+    L"files",L"file",L"customer",L"client",L"modified",L"mod",L"backup",
+    L"final",L"new",L"old",L"test",L"unknown",L"software",L"sw",L"rom",L"flash",
+    L"bosch",L"denso",L"siemens",L"continental",L"delphi",L"marelli",L"magneti"
+  };
+  std::vector<ws> tokens;
+  ws token;
+  auto flush = [&]() { if (!token.empty()) { tokens.push_back(token); token.clear(); } };
+  for (wchar_t c : stem) {
+    if ((c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') ||
+        (c >= L'0' && c <= L'9')) token += c;
+    else flush();
+  }
+  flush();
+  ws best;
+  int bestScore = -1;
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    const ws& t = tokens[i];
+    ws low = lower(t);
+    if (t.size() < 5 || t.size() > 16 || junk.count(low) || identity(t)) continue;
+    bool hasDigit = false, hasAlpha = false;
+    for (wchar_t c : t) {
+      if (c >= L'0' && c <= L'9') hasDigit = true;
+      if ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z')) hasAlpha = true;
+    }
+    if (!hasDigit) continue;
+    // Ignore engine displacement/power fragments such as 1.4T and 120Ps.
+    if (low.size() >= 2 && (low.substr(low.size()-2) == L"ps" ||
+                            low.substr(low.size()-2) == L"hp" ||
+                            low.substr(low.size()-2) == L"kw" ||
+                            low.substr(low.size()-2) == L"cc")) continue;
+    int score = (hasAlpha ? 40 : 30) + static_cast<int>(t.size());
+    // Prefer later tokens: source filenames usually place the SW/calibration ID at the end.
+    score += static_cast<int>(i);
+    if (score > bestScore) { best = t; bestScore = score; }
+  }
+  return best;
+}
 inline ws scanEmbeddedHexFilename(const uint8_t* d,size_t n) {
   static const std::vector<ws> exts={L".bin",L".hex",L".rom",L".mot",L".s19",L".srec",L".ori",L".eep",L".epr",L".dat",L".frf",L".sgo",L".odx",L".vbf",L".flash"};
   std::vector<std::pair<int,ws>> candidates;
@@ -1192,12 +1259,12 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
     if(ecuManufacturer.empty())ecuManufacturer=L"Unknown";
   }
   // Prefer the dedicated original-source filename field; scan binary strings only as fallback.
-  ws embeddedStem=softwareStemFromSourceFilename(embedded);
   ws metadataSoftware=firstFilled({get("sw_number")});ws lowSw=lower(metadataSoftware);
   bool generic=metadataSoftware.empty()||lowSw==L"unknown"||lowSw==L"n/a"||lowSw==L"none"||lowSw==L"not available"||lowSw==L"not identified"||lowSw==L"original"||lowSw==L"stock"||lowSw==L"dump"||lowSw==L"hex"||lowSw==L"rom"||lowSw==L"software"||lowSw==L"sw"||lowSw==L"-"||lowSw==L"?"||lowSw==L"%"||lowSw==lower(ecu);
   bool boschPart=std::regex_match(metadataSoftware,std::wregex(L"(0261S[0-9]{5}|0281[0-9]{6})",std::regex::ECMAScript|std::regex::icase))&&lower(ecuManufacturer).find(L"bosch")!=ws::npos;
-  bool useFallback=!embeddedStem.empty()&&(generic||boschPart);
-  ws software=useFallback?embeddedStem:metadataSoftware;
+  ws embeddedSoftware=softwareVersionFromSourceFilename(embedded,brand,model,ecu);
+  bool useFallback=!embeddedSoftware.empty()&&(generic||boschPart);
+  ws software=useFallback?embeddedSoftware:metadataSoftware;
   VersionDirectory versionDirectory;
   a.versionDirectoryValid=locateVersionDirectory(d,n,versionDirectory);
   if(a.versionDirectoryValid) {
