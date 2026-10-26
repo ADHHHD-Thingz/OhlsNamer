@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — OLS format research tooling
+
+- Added an independently developed OLS parser as a development-time reference for metadata, version/ROM segments, and calibration-map records.
+- Added version-aware research notes separating observed layout from inferred semantics and tracking unknown flag bits and reserved fields.
+- Added CI compilation for the independent parser. Full-corpus differential validation remains an evidence-gathering step, not a claim of complete bit-level understanding.
+
 ## 1.3.2
 
 - Fixed ECU-family detection accepting alphabetic prose such as "Meine" as a valid "ME" family and consequently inferring Bosch incorrectly.
