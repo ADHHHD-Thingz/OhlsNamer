@@ -25,7 +25,7 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 
 ```bash
 sudo apt install g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libz-mingw-w64-dev
-./build.sh
+sh ./build.sh
 ```
 
 This produces `OLS Renamer.exe`.
