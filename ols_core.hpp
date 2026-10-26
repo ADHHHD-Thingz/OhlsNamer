@@ -410,7 +410,8 @@ inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, cons
   ws prefix=filenamePart(brand)+L" "+filenamePart(model)+L" "+filenamePart(ecu);
   ws sw=firstFilled({software});
   if(!sw.empty()&&lower(filenamePart(sw))!=lower(filenamePart(ecu)))prefix+=L" "+filenamePart(sw);
-  ws suffix=L" ("+std::to_wstring(definedMaps)+L").ols";
+  ws countLabel=definedMaps==0?ws(L"Nil"):std::to_wstring(definedMaps);
+  ws suffix=L" ("+countLabel+L").ols";
   size_t cap=240>suffix.size()?240-suffix.size():1;
   if(prefix.size()>cap)prefix.resize(cap);
   while(!prefix.empty()&&(prefix.back()==L' '||prefix.back()==L'.'))prefix.pop_back();
