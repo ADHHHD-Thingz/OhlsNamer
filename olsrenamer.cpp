@@ -13,7 +13,7 @@
 using ols::ws;
 
 enum {
-  ID_FOLDER = 101, ID_BROWSE, ID_SUB, ID_SCAN, ID_RENAME, ID_CANCEL, ID_LIST, ID_STATUS, ID_PROGRESS
+  ID_FOLDER = 101, ID_BROWSE, ID_SUB, ID_SCAN, ID_RENAME, ID_CANCEL, ID_LIST, ID_STATUS, ID_PROGRESS, ID_FILTER, ID_CHANGES
 };
 enum {
   WM_SCAN_FOUND = WM_APP + 1,   // wParam = files found so far
@@ -25,10 +25,11 @@ enum {
 
 struct App {
   HWND hwnd = nullptr, edFolder, btnBrowse, chkSub, btnScan, btnRename, btnCancel, lblFolder, progress,
-       status, list;
+       status, list, edFilter, chkChanges;
   HFONT font = nullptr;
   int dpi = 96;
   std::vector<ws> recentDirs;
+  std::vector<size_t> visibleItems;
   ws lastDirectory;
   olsfs::Scan scan;
   std::thread worker;
@@ -149,6 +150,8 @@ static void updateButtons() {
   EnableWindow(app.chkSub, !b);
   EnableWindow(app.btnRename, !b && app.scanned && olsfs::renameCount(app.scan) > 0);
   EnableWindow(app.btnCancel, b && !app.renaming);
+  if (app.edFilter) EnableWindow(app.edFilter, !b);
+  if (app.chkChanges) EnableWindow(app.chkChanges, !b);
 }
 
 static void layout() {
@@ -173,6 +176,9 @@ static void layout() {
   y += S(18) + S(4);
   MoveWindow(app.status, m, y, W - 2 * m, S(18), TRUE);
   y += S(18) + gap;
+  MoveWindow(app.edFilter, m, y, W - 2 * m - S(190) - gap, rowH, TRUE);
+  MoveWindow(app.chkChanges, W - m - S(190), y, S(190), rowH, TRUE);
+  y += rowH + gap;
   MoveWindow(app.list, m, y, W - 2 * m, std::max(S(60), H - y - m), TRUE);
   int lw = W - 2 * m - GetSystemMetrics(SM_CXVSCROLL) - S(4);
   ListView_SetColumnWidth(app.list, 0, lw * 30 / 100);
@@ -184,7 +190,26 @@ static void layout() {
 static void applyFont(HWND h) { SendMessageW(h, WM_SETFONT, (WPARAM)app.font, TRUE); }
 
 static void refreshList() {
-  ListView_SetItemCountEx(app.list, app.scan.items.size(), LVSICF_NOINVALIDATEALL | LVSICF_NOSCROLL);
+  app.visibleItems.clear();
+  wchar_t filterBuf[1024] = {};
+  if (app.edFilter) GetWindowTextW(app.edFilter, filterBuf, 1024);
+  const ws filter = ols::lower(ols::jsTrim(filterBuf));
+  const bool onlyChanges = app.chkChanges &&
+      SendMessageW(app.chkChanges, BM_GETCHECK, 0, 0) == BST_CHECKED;
+  for (size_t i = 0; i < app.scan.items.size(); ++i) {
+    const auto& it = app.scan.items[i];
+    if (onlyChanges && !it.willRename && !it.renamed) continue;
+    if (!filter.empty()) {
+      const ws haystack = ols::lower(it.rel + L" " + it.name + L" " + it.finalName +
+                                     L" " + it.status + L" " + it.a.brand + L" " +
+                                     it.a.model + L" " + it.a.ecu + L" " + it.a.ecuManufacturer);
+      if (haystack.find(filter) == ws::npos) continue;
+    }
+    app.visibleItems.push_back(i);
+  }
+  ListView_SetItemCountEx(app.list, static_cast<int>(std::min<size_t>(
+      app.visibleItems.size(), static_cast<size_t>(INT_MAX))),
+      LVSICF_NOINVALIDATEALL | LVSICF_NOSCROLL);
   InvalidateRect(app.list, nullptr, TRUE);
 }
 
@@ -297,8 +322,8 @@ static LRESULT onNotify(LPNMHDR nh) {
   if (nh->hwndFrom != app.list) return 0;
   if (nh->code == NM_DBLCLK) {
     const auto* act = reinterpret_cast<const NMITEMACTIVATE*>(nh);
-    if (act->iItem >= 0 && (size_t)act->iItem < app.scan.items.size()) {
-      const auto& it = app.scan.items[(size_t)act->iItem];
+    if (act->iItem >= 0 && (size_t)act->iItem < app.visibleItems.size()) {
+      const auto& it = app.scan.items[app.visibleItems[(size_t)act->iItem]];
       const auto& a = it.a;
       if (!a.ok) {
         MessageBoxW(app.hwnd, a.error.c_str(), L"OLS analysis", MB_ICONWARNING);
@@ -352,8 +377,8 @@ static LRESULT onNotify(LPNMHDR nh) {
   }
   if (nh->code == LVN_GETDISPINFOW) {
     auto* di = (NMLVDISPINFOW*)nh;
-    if (!(di->item.mask & LVIF_TEXT) || (size_t)di->item.iItem >= app.scan.items.size()) return 0;
-    const auto& it = app.scan.items[di->item.iItem];
+    if (!(di->item.mask & LVIF_TEXT) || (size_t)di->item.iItem >= app.visibleItems.size()) return 0;
+    const auto& it = app.scan.items[app.visibleItems[(size_t)di->item.iItem]];
     const ws* s = &it.status;
     static const ws empty, same = L"(unchanged)";
     switch (di->item.iSubItem) {
@@ -369,9 +394,9 @@ static LRESULT onNotify(LPNMHDR nh) {
     auto* cd = (NMLVCUSTOMDRAW*)nh;
     if (cd->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
     if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
-      size_t i = (size_t)cd->nmcd.dwItemSpec;
-      if (i < app.scan.items.size()) {
-        const auto& it = app.scan.items[i];
+      size_t row = (size_t)cd->nmcd.dwItemSpec;
+      if (row < app.visibleItems.size()) {
+        const auto& it = app.scan.items[app.visibleItems[row]];
         if (it.failed) cd->clrText = RGB(176, 32, 32);
         else if (it.renamed) cd->clrText = RGB(20, 120, 50);
         else if (it.a.ok && !it.willRename) cd->clrText = RGB(110, 110, 110);
@@ -410,6 +435,9 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       app.btnCancel = mk(L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, ID_CANCEL);
       app.progress = mk(PROGRESS_CLASSW, L"", PBS_SMOOTH, ID_PROGRESS);
       app.status = mk(L"STATIC", L"Choose a folder, or drop one onto this window.", SS_LEFT | SS_ENDELLIPSIS, ID_STATUS);
+      app.edFilter = mk(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, ID_FILTER, WS_EX_CLIENTEDGE);
+      SendMessageW(app.edFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"Filter by filename, make, ECU, or status...");
+      app.chkChanges = mk(L"BUTTON", L"Only rename candidates", WS_TABSTOP | BS_AUTOCHECKBOX, ID_CHANGES);
       app.list = mk(WC_LISTVIEWW, L"", WS_TABSTOP | LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS | LVS_SINGLESEL,
                     ID_LIST, WS_EX_CLIENTEDGE);
       ListView_SetExtendedListViewStyle(app.list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER |
@@ -454,6 +482,12 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case ID_SCAN:
         case IDOK: startScan(); break;
         case ID_RENAME: startRename(); break;
+        case ID_FILTER:
+          if (HIWORD(w) == EN_CHANGE && !app.busy) refreshList();
+          break;
+        case ID_CHANGES:
+          if (!app.busy) refreshList();
+          break;
         case ID_CANCEL:
           app.cancel = true;
           setStatus(L"Cancelling...");
