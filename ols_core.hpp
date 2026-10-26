@@ -106,10 +106,20 @@ inline ws normalizeVehicleBrand(const ws& raw) {
   static const std::map<ws,ws> aliases={{L"alfa",L"Alfa Romeo"},{L"vw",L"Volkswagen"},
     {L"volkswagen ag",L"Volkswagen"},{L"mercedes",L"Mercedes Benz"},{L"landrover",L"Land Rover"},
     {L"rolls royce",L"Rolls Royce"},{L"gm",L"General Motors"},{L"psa",L"Peugeot"},
-    {L"ssang yong",L"SsangYong"},{L"bmw ag",L"BMW"},{L"tata motors",L"Tata"}};
+    {L"ssang yong",L"SsangYong"},{L"bmw ag",L"BMW"},{L"tata motors",L"Tata"},{L"citroën",L"Citroen"}};
   auto a=aliases.find(n);if(a!=aliases.end())return a->second;
   for(const auto& b:vehicleBrandCatalogue())if(catalogNorm(b)==n)return b;
   return jsTrim(raw);
+}
+inline ws inferVehicleBrandFromText(const ws& raw) {
+  ws n=L" "+catalogNorm(raw)+L" ";ws best;size_t bestLen=0;bool ambiguous=false;
+  for(const auto& b:vehicleBrandCatalogue()) {
+    ws needle=L" "+catalogNorm(b)+L" ";
+    if(n.find(needle)==ws::npos)continue;
+    if(needle.size()>bestLen){best=b;bestLen=needle.size();ambiguous=false;}
+    else if(needle.size()==bestLen&&b!=best)ambiguous=true;
+  }
+  return best.empty()||ambiguous?ws(L"Unknown"):best;
 }
 inline ws identifyEcuManufacturer(const ws& raw) {
   ws n=catalogNorm(raw);if(n.empty()||n==L"-"||n==L"?"||n==L"%")return L"Unknown";
@@ -120,6 +130,19 @@ inline ws identifyEcuManufacturer(const ws& raw) {
   auto a=aliases.find(n);if(a!=aliases.end())return a->second;
   for(const auto& m:ecuManufacturerCatalogue()){ws mn=catalogNorm(m);if(n==mn||(L" "+n+L" ").find(L" "+mn+L" ")!=ws::npos)return m;}
   return jsTrim(raw);
+}
+inline ws inferEcuManufacturerFromText(const ws& raw) {
+  ws n=L" "+catalogNorm(raw)+L" ";ws best;size_t bestLen=0;bool ambiguous=false;
+  for(const auto& m:ecuManufacturerCatalogue()) {
+    ws needle=L" "+catalogNorm(m)+L" ";
+    if(n.find(needle)==ws::npos)continue;
+    if(needle.size()>bestLen){best=m;bestLen=needle.size();ambiguous=false;}
+    else if(needle.size()==bestLen&&m!=best)ambiguous=true;
+  }
+  if(!best.empty()&&!ambiguous)return best;
+  ws normalized=identifyEcuManufacturer(raw);
+  for(const auto& m:ecuManufacturerCatalogue())if(catalogNorm(m)==catalogNorm(normalized))return m;
+  return L"Unknown";
 }
 inline ws inferEcuManufacturerFromFamily(const ws& ecu) {
   ws n=lower(jsTrim(ecu));
@@ -451,6 +474,7 @@ struct Analysis {
   uint32_t formatVersion = 0;
   ws brand = L"Unknown", model = L"Unknown", ecu = L"Unknown", software;
   ws ecuManufacturer = L"Unknown", hardwareNumber, productionNumber, engineCode, vehicleYear;
+  ws brandSource = L"unknown";
   ws originalFileName, embeddedHexFilename, softwareSource = L"unknown", ecuSource = L"unknown";
   std::vector<std::pair<ws, ws>> metadata;
   std::vector<MapDetail> mapDetails;
@@ -967,12 +991,24 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   for(const auto& kv:meta) {
     if(!kv.first.empty()&&kv.first[0]!='_')a.metadata.push_back({fromAscii(kv.first.c_str()),kv.second});
   }
-  ws rawBrand=firstFilled({get("make")});ws brand=normalizeVehicleBrand(rawBrand);
+  ws original=get("original_file_name");
+  ws rawBrand=firstFilled({get("make")});
+  ws inferredBrand=rawBrand.empty()?inferVehicleBrandFromText(original):ws(L"Unknown");
+  ws brand=!rawBrand.empty()?normalizeVehicleBrand(rawBrand):(!inferredBrand.empty()&&inferredBrand!=L"Unknown"?inferredBrand:ws(L"Unknown"));
   ws model=firstFilled({get("model"),get("type"),get("engine_code")});if(model.empty())model=L"Unknown";
   ws explicitEcu=firstFilled({get("ecu_name")});ws inferredEcu=explicitEcu.empty()?inferEcuFamily(d,n):ws();
   ws ecu=!explicitEcu.empty()?explicitEcu:(!inferredEcu.empty()?inferredEcu:ws(L"Unknown"));
-  ws ecuManufacturer=identifyEcuManufacturer(get("manufacturer"));if(ecuManufacturer==L"Unknown")ecuManufacturer=inferEcuManufacturerFromFamily(ecu);
-  ws original=get("original_file_name");
+  ws rawMaker=get("manufacturer");ws ecuManufacturer=identifyEcuManufacturer(rawMaker);
+  bool knownMaker=false;for(const auto& m:ecuManufacturerCatalogue())if(catalogNorm(m)==catalogNorm(ecuManufacturer))knownMaker=true;
+  if(!knownMaker) {
+    ws fromFilename=inferEcuManufacturerFromText(original);
+    if(fromFilename!=L"Unknown")ecuManufacturer=fromFilename;
+    else {
+      ws fromFamily=inferEcuManufacturerFromFamily(ecu);
+      if(fromFamily!=L"Unknown")ecuManufacturer=fromFamily;
+    }
+    if(ecuManufacturer.empty())ecuManufacturer=L"Unknown";
+  }
   // Prefer the dedicated original-source filename field; scan binary strings only as fallback.
   ws embedded=softwareStemFromSourceFilename(original).empty()?scanEmbeddedHexFilename(d,n):original;
   ws embeddedStem=softwareStemFromSourceFilename(embedded);
@@ -983,7 +1019,8 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   ws software=useFallback?embeddedStem:metadataSoftware;
   Candidate ex=extractMaps(d,n,formatVersion,a.warnings);
   a.ok=true;a.formatVersion=formatVersion;a.brand=brand;a.model=model;a.ecu=ecu;a.software=software;
-  a.ecuManufacturer=ecuManufacturer;a.hardwareNumber=get("hw_number");a.productionNumber=get("production_no");
+  a.ecuManufacturer=ecuManufacturer;a.brandSource=!rawBrand.empty()?L"metadata":(inferredBrand!=L"Unknown"?L"inferred from original filename":L"unknown");
+  a.hardwareNumber=get("hw_number");a.productionNumber=get("production_no");
   a.engineCode=get("engine_code");a.vehicleYear=get("year");a.originalFileName=original;a.embeddedHexFilename=embedded;
   a.softwareSource=software.empty()?L"unknown":(useFallback?L"embedded hex filename":L"metadata");
   a.ecuSource=!explicitEcu.empty()?L"metadata":(!inferredEcu.empty()?L"inferred from project text":L"unknown");
