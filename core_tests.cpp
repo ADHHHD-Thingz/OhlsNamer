@@ -5,6 +5,9 @@ int main() {
   using namespace ols;
   assert(normalizeVehicleBrand(L"VW") == L"Volkswagen");
   assert(normalizeVehicleBrand(L"Alfa") == L"Alfa Romeo");
+  assert(inferVehicleBrandFromText(L"ori_Alfa_Romeo_1.4T_510422.bin") == L"Alfa Romeo");
+  assert(inferEcuManufacturerFromText(L"Bosch_EDC17C46.bin") == L"Bosch");
+  assert(inferVehicleBrandFromText(L"unknown_read.bin") == L"Unknown");
   assert(identifyEcuManufacturer(L"Robert Bosch GmbH") == L"Bosch");
   assert(identifyEcuManufacturer(L"Continental Automotive") == L"Continental");
   assert(inferEcuManufacturerFromFamily(L"EDC17C46") == L"Bosch");
