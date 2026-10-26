@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.7
+
+- Treat embedded original HEX/BIN names as evidence only, not as ready-made software-version strings.
+- Promote only a version-like identifier from the source basename; discard descriptive/vendor-only names such as `tunecenter` and exclude identifiers already represented by the ECU/identity slots.
+- Deduplicate repeated filename segments and add regression tests for source-name junk, software-code extraction and repeated slots.
+
+
 ## 1.3.6
 
 - Count only human-named map labels; generated supplier placeholders such as “Bosch map”, “Denso map”, and “Siemens map 2” do not inflate the map count, even when a description is populated.
