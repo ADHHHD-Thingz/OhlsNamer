@@ -45,7 +45,11 @@ int main() {
   assert(!isDefinedMap(L"Bosch map", L""));
   assert(!isDefinedMap(L"Denso Map", L""));
   assert(!isDefinedMap(L"Siemens map 2", L""));
+  assert(!isDefinedMap(L"Bosch map", L"Fuel / 16 x 16 / 16 bit"));
+  assert(!isDefinedMap(L"Denso Map", L"Torque limiter"));
+  assert(!isDefinedMap(L"", L"Human-looking description must not replace a missing map name"));
   assert(isDefinedMap(L"Bosch torque limiter", L""));
+  assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
   assert(longName.size()<=240 && longName.find(L"(42).ols")!=ws::npos);
   assert(proposedFilename(L"BMW",L"320d",L"EDC17C46",L"",0).find(L"(Nil).ols")!=ws::npos);
@@ -110,6 +114,22 @@ int main() {
   assert(locateVersionDirectory(m1Collision.data(), m1Collision.size(), collisionVd));
   assert(collisionVd.markerOffset == 64);
   assert(collisionVd.dataStart == 100 && collisionVd.count == 2);
+
+  // A marker-shaped sequence deep in a large ROM must not trigger version-array
+  // dispatch. The version directory is expected in the bounded serialized header.
+  Bytes deepMarker(8u * 1024u * 1024u + 256u, 0);
+  auto putDeep = [&](size_t off, uint32_t value) {
+    deepMarker[off] = static_cast<uint8_t>(value);
+    deepMarker[off + 1] = static_cast<uint8_t>(value >> 8);
+    deepMarker[off + 2] = static_cast<uint8_t>(value >> 16);
+    deepMarker[off + 3] = static_cast<uint8_t>(value >> 24);
+  };
+  size_t deep = 8u * 1024u * 1024u + 64u;
+  putDeep(deep - 12, 1); putDeep(deep - 8, static_cast<uint32_t>(deep + 4));
+  putDeep(deep - 4, 64); putDeep(deep, 0x42007899u);
+  putDeep(deep + 4, 0x98728833u);
+  VersionDirectory deepVd;
+  assert(!locateVersionDirectory(deepMarker.data(), deepMarker.size(), deepVd));
 
   // Malformed-input safety: all short prefixes must be rejected before field reads.
   for (size_t n = 0; n < 24; ++n) {
