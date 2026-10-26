@@ -1087,7 +1087,7 @@ inline ws softwareVersionFromSourceFilename(const ws& raw, const ws& brand = L""
     if (t.empty()) return false;
     for (const ws& part : {brand, model, ecu}) {
       ws p = catalogNorm(part);
-      if (!p.empty() && t == p) return true;
+      if (!p.empty() && (t == p || (L" " + p + L" ").find(L" " + t + L" ") != ws::npos)) return true;
     }
     return false;
   };
