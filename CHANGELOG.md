@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.4
+
+- Hardened M1 version-directory selection: when multiple structurally plausible candidates exist, prefer the one whose data start is corroborated by the M3 marker, rather than a false M1-like sequence inside a ROM payload that happens to calculate to EOF.
+- Retained compatibility fallback for schema variants without M3 at the version-data start; M3 is corroborating evidence, not treated as universally mandatory.
+- Excluded supplier-only generic map labels such as “Bosch map”, “Denso map”, and “Siemens map” from the defined/human-named map count.
+- Added regression tests for false M1 collisions and generic supplier map labels.
+
 ## 1.3.3
 
 - Added bounds-checked M1 version-directory parsing for version count, data start and per-version record size.
