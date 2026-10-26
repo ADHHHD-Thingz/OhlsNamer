@@ -31,6 +31,18 @@ int main() {
   assert(inferVehicleBrandFromText(sampleSource) == L"Alfa Romeo");
   assert(softwareStemFromSourceFilename(sampleSource) == L"ori_Alfa_Romeo_Giulietta_1.4T_120Ps_510422");
   assert(softwareStemFromSourceFilename(L"project.ols").empty());
+  assert(softwareVersionFromSourceFilename(
+      L"\\\\BUEROTUSSI\\ftp\\Tuningfiles\\ALFA ROMEO\\Giulietta\\1.4 TB 16V 120PS ME7.9.10\\0261S05118\\ori_Alfa_Romeo_Giulietta_1.4T_120Ps_510422.bin",
+      L"Alfa Romeo", L"Giulietta", L"ME7.9.10") == L"510422");
+  assert(softwareVersionFromSourceFilename(L"tunecenter.bin").empty());
+  assert(softwareVersionFromSourceFilename(
+      L"ori_VW_Golf_Bosch_EDC17C46_123456.bin", L"Volkswagen", L"Golf", L"Bosch EDC17C46") == L"123456");
+  assert(softwareVersionFromSourceFilename(L"ori_Alfa_Romeo_Giulietta.bin",
+      L"Alfa Romeo", L"Giulietta", L"ME7.9.10").empty());
+  assert(proposedFilename(L"VW", L"VW", L"EDC17C46", L"EDC17C46", 1) ==
+      L"VW EDC17C46 (1).ols");
+  assert(proposedFilename(L"BMW", L"320d", L"EDC17C46", L"03G906016", 42) ==
+      L"BMW 320d EDC17C46 03G906016 (42).ols");
   const ws sourceFallback=L"ori_VW_Golf_Bosch_EDC17C46_123456.bin";
   assert(selectSourceFilename(L"project.ols", sourceFallback)==sourceFallback);
   assert(inferVehicleBrandFromText(selectSourceFilename(L"project.ols", sourceFallback))==L"Volkswagen");
