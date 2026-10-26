@@ -1,0 +1,19 @@
+name: C++ core checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler and zlib headers
+        run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
+      - name: Compile CLI with warnings
+        run: g++ -std=c++17 -Wall -Wextra -Wpedantic core_cli.cpp -lz -o core_cli
+      - name: Compile and run regression tests
+        run: g++ -std=c++17 -Wall -Wextra -Wpedantic core_tests.cpp -lz -o core_tests && ./core_tests

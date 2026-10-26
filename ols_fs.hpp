@@ -159,7 +159,10 @@ inline void analyzeAll(Scan& sc, std::atomic<bool>& cancel,
       if (it.a.ok) {
         it.mapsText = std::to_wstring(it.a.definedCount);
         ws w = mapWarning(it.a);
-        it.status = w.empty() ? ws(L"Ready") : L"Check: " + w;
+        ws evidence = L"v" + std::to_wstring(it.a.formatVersion) + L" | ECU maker: " + it.a.ecuManufacturer +
+                      L" | SW source: " + it.a.softwareSource;
+        if (!it.a.renameSafe) it.status = L"Review only: " + evidence + (w.empty() ? ws() : L" | " + w);
+        else it.status = evidence + (w.empty() ? ws(L" | Ready") : L" | Check: " + w);
       } else {
         it.status = it.a.error;
         it.failed = true;
@@ -182,8 +185,9 @@ inline void computeFinal(Scan& sc) {
       Item& it = sc.items[i];
       if (!it.a.ok) continue;
       it.finalName = ols::disambiguate(it.a.proposed, taken);
-      it.willRename = it.finalName != it.name;
-      if (!it.willRename) it.status = L"Already named";
+      it.willRename = it.a.renameSafe && it.finalName != it.name;
+      if (!it.a.renameSafe) it.status = L"Review only - not renamed automatically";
+      else if (!it.willRename) it.status = L"Already named";
     }
   }
 }
@@ -301,8 +305,11 @@ inline void writeLog(const Scan& sc, ws& outPath) {
     outPath.clear();
     return;
   }
-  DWORD n;
-  WriteFile(h, bytes.data(), (DWORD)bytes.size(), &n, nullptr);
-  CloseHandle(h);
+  DWORD n = 0;
+  const DWORD want = (DWORD)bytes.size();
+  bool ok = WriteFile(h, bytes.data(), want, &n, nullptr) && n == want;
+  ok = FlushFileBuffers(h) && ok;
+  ok = CloseHandle(h) && ok;
+  if (!ok) outPath.clear();
 }
 }  // namespace olsfs
