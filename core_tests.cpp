@@ -10,6 +10,9 @@ int main() {
   assert(inferEcuManufacturerFromFamily(L"EDC17C46") == L"Bosch");
   assert(inferEcuManufacturerFromFamily(L"SIMOS 18.1") == L"Continental");
   assert(softwareStemFromSourceFilename(L"C:\\\\ROMs\\\\ori_Alfa_1.4T_510422.bin") == L"ori_Alfa_1.4T_510422");
+  const char embeddedRaw[] = "Source file: ori_Alfa_Romeo_1.4T_510422.bin";
+  Bytes embeddedBytes(embeddedRaw, embeddedRaw + sizeof(embeddedRaw) - 1);
+  assert(scanEmbeddedHexFilename(embeddedBytes.data(), embeddedBytes.size()) == L"ori_Alfa_Romeo_1.4T_510422.bin");
   assert(softwareStemFromSourceFilename(L"project.ols").empty());
   assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
   assert(!isDefinedMap(L"Bosch 16 bit. 8 x 10", L""));
