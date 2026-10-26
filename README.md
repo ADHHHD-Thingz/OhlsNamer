@@ -16,12 +16,21 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 - Counts defined (named, non-placeholder) maps
 - Proposes clean, filesystem-safe names
 - Disambiguates collisions inside each folder
-- Keeps uncertain identity/map results review-only rather than silently batch-renaming them
+- Keeps malformed headers and unvalidated map structures review-only; partial-identity proposals omit unknown placeholders and retain the original filename stem
 - Renames in-place with a multi-pass algorithm that handles swaps and cycles via temporary names
 - Writes a CSV log of the renames
 - Drag-and-drop a folder or file onto the window
 - Cancelable scan
+- Recent-directory dropdown remembers the last 10 successful scan folders
+- Restores the last-used directory and recursive-scan preference between launches
 - Double-click a project to inspect parsed header fields, identity sources, map evidence and warnings
+
+## Version 1.3.5
+
+- Adds a persistent recent-directory picker and restores the last-used directory and recursive-scan preference.
+- Allows auto-renaming with partial identity when header, version-directory, size and map-directory checks pass.
+- Omits unknown identity placeholders and retains the original filename stem in brackets when brand, model or ECU identity is missing.
+- Adds regression tests for partial identity filename generation.
 
 ## Version 1.3.4
 
