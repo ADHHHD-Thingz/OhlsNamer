@@ -42,6 +42,10 @@ int main() {
   assert(scanEmbeddedHexFilename(utf16Bytes.data(),utf16Bytes.size())==L"ori_VW_Golf_Bosch_EDC17C46_123456.bin");
   assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
   assert(!isDefinedMap(L"Bosch 16 bit. 8 x 10", L""));
+  assert(!isDefinedMap(L"Bosch map", L""));
+  assert(!isDefinedMap(L"Denso Map", L""));
+  assert(!isDefinedMap(L"Siemens map 2", L""));
+  assert(isDefinedMap(L"Bosch torque limiter", L""));
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
   assert(longName.size()<=240 && longName.find(L"(42).ols")!=ws::npos);
   assert(proposedFilename(L"BMW",L"320d",L"EDC17C46",L"",0).find(L"(Nil).ols")!=ws::npos);
@@ -80,6 +84,26 @@ int main() {
   invalidVersioned[55] = 0xff;
   VersionDirectory invalidVd;
   assert(!locateVersionDirectory(invalidVersioned.data(), invalidVersioned.size(), invalidVd));
+
+  // A false M1-like sequence inside a payload can have valid arithmetic and end
+  // exactly at EOF. Prefer the structurally corroborated directory whose data
+  // starts with M3 instead of dispatching to the false candidate.
+  Bytes m1Collision(304, 0);
+  auto put32Collision = [&](size_t off, uint32_t value) {
+    m1Collision[off] = static_cast<uint8_t>(value);
+    m1Collision[off + 1] = static_cast<uint8_t>(value >> 8);
+    m1Collision[off + 2] = static_cast<uint8_t>(value >> 16);
+    m1Collision[off + 3] = static_cast<uint8_t>(value >> 24);
+  };
+  put32Collision(52, 1); put32Collision(56, 100); put32Collision(60, 80);
+  put32Collision(64, 0x42007899u);
+  put32Collision(100, 0x98728833u);
+  put32Collision(188, 0); put32Collision(192, 232); put32Collision(196, 68);
+  put32Collision(200, 0x42007899u);
+  VersionDirectory collisionVd;
+  assert(locateVersionDirectory(m1Collision.data(), m1Collision.size(), collisionVd));
+  assert(collisionVd.markerOffset == 64);
+  assert(collisionVd.dataStart == 100 && collisionVd.count == 2);
 
   // Malformed-input safety: all short prefixes must be rejected before field reads.
   for (size_t n = 0; n < 24; ++n) {
