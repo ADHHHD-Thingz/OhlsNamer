@@ -45,6 +45,42 @@ int main() {
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
   assert(longName.size()<=240 && longName.find(L"(42).ols")!=ws::npos);
   assert(proposedFilename(L"BMW",L"320d",L"EDC17C46",L"",0).find(L"(Nil).ols")!=ws::npos);
+  // M1 version-array dispatch: validate count/start/record-size before using
+  // the ROM-array boundary, and ignore M2-like markers inside the ROM bytes.
+  Bytes versioned(256, 0);
+  auto put32 = [&](size_t off, uint32_t value) {
+    versioned[off] = static_cast<uint8_t>(value);
+    versioned[off + 1] = static_cast<uint8_t>(value >> 8);
+    versioned[off + 2] = static_cast<uint8_t>(value >> 16);
+    versioned[off + 3] = static_cast<uint8_t>(value >> 24);
+  };
+  put32(52, 1);       // version_count_minus_one => two versions
+  put32(56, 96);      // version_data_start (M3 fence)
+  put32(60, 64);      // bytes per version
+  put32(64, 0x42007899u);
+  put32(80, 0x11883377u);
+  versioned[84] = 0;  // uncompressed
+  put32(85, 1);       // one map-record candidate
+  put32(150, 0x11883377u); // false marker inside ROM/version payload
+  versioned[154] = 0;
+  put32(155, 1);
+  VersionDirectory vd;
+  assert(locateVersionDirectory(versioned.data(), versioned.size(), vd));
+  assert(vd.markerOffset == 64 && vd.count == 2);
+  assert(vd.dataStart == 96 && vd.recordSize == 64 && vd.endOffset == 228);
+  const auto boundedMarkers = findMarkers(versioned.data(), versioned.size(), vd.dataStart);
+  assert(boundedMarkers.size() == 1);
+  assert(boundedMarkers[0].at == 89);
+
+  // Invalid version-array dimensions must not be dispatched as a valid array.
+  Bytes invalidVersioned = versioned;
+  invalidVersioned[52] = 0xff;
+  invalidVersioned[53] = 0xff;
+  invalidVersioned[54] = 0xff;
+  invalidVersioned[55] = 0xff;
+  VersionDirectory invalidVd;
+  assert(!locateVersionDirectory(invalidVersioned.data(), invalidVersioned.size(), invalidVd));
+
   // Malformed-input safety: all short prefixes must be rejected before field reads.
   for (size_t n = 0; n < 24; ++n) {
     Bytes truncated(n, 0);
