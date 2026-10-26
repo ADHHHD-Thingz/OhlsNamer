@@ -208,7 +208,7 @@ inline bool writeRecoveryJournal(const Scan& sc, ws& outPath) {
   ws text=L"Source,Target,Status\r\n";
   for(const auto& it:sc.items) if(it.willRename&&!it.renamed)
     text+=quote(it.path())+L","+quote(it.dir+L"\\"+it.finalName)+L",planned\r\n";
-  std::string bytes="\\xEF\\xBB\\xBF"+ols::utf8(text);
+  std::string bytes="\xEF\xBB\xBF"+ols::utf8(text);
   ws prefix=sc.root; if(!prefix.empty()&&prefix.back()!=L'\\')prefix+=L"\\";
   for(int attempt=1;attempt<=100;++attempt) {
     outPath=prefix+L"OLS Renamer recovery plan "+stamp+(attempt==1?ws():L" "+std::to_wstring(attempt))+L".csv";
