@@ -477,9 +477,48 @@ inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, cons
                            int definedMaps) {
   ws prefix;
   std::set<ws> seenParts;
+  std::vector<ws> priorParts;
   auto appendPart = [&](const ws& raw) {
     if (isUnknownNamePart(raw)) return;
-    ws part = filenamePart(raw);
+    ws part = jsTrim(raw);
+    // Remove an already-emitted slot when it is embedded as a whole phrase in a
+    // longer later slot (e.g. make="Alfa Romeo", model="Alfa Romeo Giulietta").
+    for (const ws& prior : priorParts) {
+      ws needle = lower(jsTrim(prior));
+      if (needle.empty()) continue;
+      ws lowPart = lower(part);
+      size_t pos = lowPart.find(needle);
+      while (pos != ws::npos) {
+        const size_t end = pos + needle.size();
+        auto word = [](wchar_t c) {
+          return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') ||
+                 (c >= L'0' && c <= L'9');
+        };
+        if ((pos == 0 || !word(lowPart[pos - 1])) &&
+            (end == lowPart.size() || !word(lowPart[end]))) {
+          part.replace(pos, needle.size(), L" ");
+          lowPart = lower(part);
+          pos = lowPart.find(needle, pos);
+        } else {
+          pos = lowPart.find(needle, end);
+        }
+      }
+    }
+    part = jsTrim(part);
+    ws compact;
+    bool wasSpace = false;
+    for (wchar_t c : part) {
+      if (isJsSpace(c)) {
+        if (!wasSpace) compact += L' ';
+        wasSpace = true;
+      } else {
+        compact += c;
+        wasSpace = false;
+      }
+    }
+    part = jsTrim(compact);
+    if (part.empty()) return;
+    part = filenamePart(part);
     if (part.empty() || lower(part) == L"unknown") return;
     // Compare normalized words, so separators/case changes cannot duplicate a slot.
     ws key = catalogNorm(part);
@@ -494,6 +533,7 @@ inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, cons
     if (!prefix.empty()) prefix += L" ";
     prefix += part;
     seenParts.insert(key);
+    priorParts.push_back(part);
   };
   appendPart(brand);
   appendPart(model);
