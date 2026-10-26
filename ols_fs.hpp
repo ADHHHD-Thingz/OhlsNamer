@@ -37,6 +37,7 @@ struct Scan {
   ws root;
   ws journalPath;
   std::vector<Item> items;
+  std::vector<ws> scanErrors;
   std::map<ws, std::set<ws>> names;  // lower(dir) -> lower(entry names), files and folders
 };
 
@@ -61,9 +62,14 @@ inline void scanDir(Scan& sc, const ws& dir, const ws& rel, bool recursive, std:
   WIN32_FIND_DATAW fd;
   HANDLE h = FindFirstFileExW((dir + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch,
                               nullptr, FIND_FIRST_EX_LARGE_FETCH);
-  if (h == INVALID_HANDLE_VALUE) return;
+  if (h == INVALID_HANDLE_VALUE) {
+    DWORD e=GetLastError();
+    sc.scanErrors.push_back(dir+L": "+lastError(e));
+    return;
+  }
   std::vector<ws> subdirs;
   auto& taken = sc.names[ols::lower(dir)];
+  BOOL more = TRUE;
   do {
     ws name = fd.cFileName;
     if (name == L"." || name == L"..") continue;
@@ -79,7 +85,11 @@ inline void scanDir(Scan& sc, const ws& dir, const ws& rel, bool recursive, std:
       sc.items.push_back(std::move(it));
       onFound(sc.items.size());
     }
-  } while (!cancel && FindNextFileW(h, &fd));
+  } while (!cancel && (more = FindNextFileW(h, &fd)));
+  if (!cancel && !more) {
+    DWORD e=GetLastError();
+    if(e!=ERROR_NO_MORE_FILES)sc.scanErrors.push_back(dir+L": "+lastError(e));
+  }
   FindClose(h);
   for (const ws& d : subdirs) {
     if (cancel) return;
@@ -93,6 +103,8 @@ inline bool scanFolder(Scan& sc, ws root, bool recursive, std::atomic<bool>& can
   if (root.size() == 2 && root[1] == L':') root += L"\\";  // "C:" -> "C:\"
   sc.root = root;
   sc.items.clear();
+  sc.scanErrors.clear();
+  sc.journalPath.clear();
   sc.names.clear();
   DWORD attr = GetFileAttributesW(root.c_str());
   if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return false;
