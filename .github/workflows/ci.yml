@@ -17,3 +17,7 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Wpedantic core_cli.cpp -lz -o core_cli
       - name: Compile and run regression tests
         run: g++ -std=c++17 -Wall -Wextra -Wpedantic core_tests.cpp -lz -o core_tests && ./core_tests
+      - name: Install MinGW cross-compiler
+        run: sudo apt-get install -y g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libz-mingw-w64-dev
+      - name: Cross-compile Win32 GUI release executable
+        run: ./build.sh
