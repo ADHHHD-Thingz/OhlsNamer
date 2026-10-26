@@ -24,3 +24,9 @@ jobs:
         run: sudo apt-get install -y g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libz-mingw-w64-dev
       - name: Cross-compile Win32 GUI release executable
         run: sh ./build.sh
+      - name: Publish Windows x64 executable as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OhlsNamer-v1.3-windows-x64
+          path: OLS Renamer.exe
+          if-no-files-found: error
