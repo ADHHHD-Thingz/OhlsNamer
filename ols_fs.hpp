@@ -11,6 +11,8 @@
 
 #include <atomic>
 #include <functional>
+#include <mutex>
+#include <thread>
 
 #include "ols_core.hpp"
 
@@ -156,33 +158,56 @@ inline ws mapWarning(const ols::Analysis& a) {
 
 inline void analyzeAll(Scan& sc, std::atomic<bool>& cancel,
                        const std::function<void(size_t, size_t)>& progress) {
-  size_t total = sc.items.size();
-  for (size_t i = 0; i < total; i++) {
-    if (cancel) return;
-    Item& it = sc.items[i];
-    ols::Bytes data;
-    ws err;
-    if (!readFile(it.path(), data, err)) {
-      it.a.ok = false;
-      it.status = L"Cannot read: " + err;
-      it.failed = true;
-    } else {
-      it.a = ols::analyzeOls(data.data(), data.size());
-      it.read = true;
-      if (it.a.ok) {
-        it.mapsText = std::to_wstring(it.a.definedCount);
-        ws w = mapWarning(it.a);
-        ws evidence = L"v" + std::to_wstring(it.a.formatVersion) + L" | ECU maker: " + it.a.ecuManufacturer +
-                      L" | SW source: " + it.a.softwareSource;
-        if (!it.a.renameSafe) it.status = L"Review only: " + evidence + (w.empty() ? ws() : L" | " + w);
-        else it.status = evidence + (w.empty() ? ws(L" | Ready") : L" | Check: " + w);
-      } else {
-        it.status = it.a.error;
+  const size_t total = sc.items.size();
+  if (total == 0) { progress(0, 0); return; }
+
+  // A small bounded pool improves throughput on databases with thousands of
+  // files, especially when storage latency dominates. Keep the cap low so
+  // multiple large OLS files do not create unbounded memory pressure.
+  const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+  const size_t workerCount = std::min<size_t>(total, std::min<unsigned>(4u, hw));
+  std::atomic<size_t> next{0};
+  std::atomic<size_t> completed{0};
+  std::mutex progressMutex;
+
+  auto worker = [&]() {
+    while (!cancel.load()) {
+      const size_t i = next.fetch_add(1);
+      if (i >= total) break;
+      Item& it = sc.items[i];  // each index is claimed by exactly one worker
+      ols::Bytes data;
+      ws err;
+      if (!readFile(it.path(), data, err)) {
+        it.a.ok = false;
+        it.status = L"Cannot read: " + err;
         it.failed = true;
+      } else {
+        it.a = ols::analyzeOls(data.data(), data.size());
+        it.read = true;
+        if (it.a.ok) {
+          it.mapsText = std::to_wstring(it.a.definedCount);
+          ws w = mapWarning(it.a);
+          ws evidence = L"v" + std::to_wstring(it.a.formatVersion) + L" | ECU maker: " + it.a.ecuManufacturer +
+                        L" | SW source: " + it.a.softwareSource;
+          if (!it.a.renameSafe) it.status = L"Review only: " + evidence + (w.empty() ? ws() : L" | " + w);
+          else it.status = evidence + (w.empty() ? ws(L" | Ready") : L" | Check: " + w);
+        } else {
+          it.status = it.a.error;
+          it.failed = true;
+        }
+      }
+      const size_t done = completed.fetch_add(1) + 1;
+      {
+        std::lock_guard<std::mutex> lock(progressMutex);
+        progress(done, total);
       }
     }
-    progress(i + 1, total);
-  }
+  };
+
+  std::vector<std::thread> workers;
+  workers.reserve(workerCount);
+  for (size_t i = 0; i < workerCount; ++i) workers.emplace_back(worker);
+  for (auto& t : workers) t.join();
 }
 
 // Same rules as withFinalNames() in the web app: per folder, names of files that
