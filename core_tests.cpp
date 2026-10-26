@@ -45,5 +45,49 @@ int main() {
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
   assert(longName.size()<=240 && longName.find(L"(42).ols")!=ws::npos);
   assert(proposedFilename(L"BMW",L"320d",L"EDC17C46",L"",0).find(L"(Nil).ols")!=ws::npos);
+  // Malformed-input safety: all short prefixes must be rejected before field reads.
+  for (size_t n = 0; n < 24; ++n) {
+    Bytes truncated(n, 0);
+    const auto a = analyzeOls(truncated.empty() ? nullptr : truncated.data(), truncated.size());
+    assert(!a.ok);
+  }
+
+  // A valid signature with an impossible metadata length must remain review-only.
+  Bytes malformed(32, 0);
+  malformed[0] = 0x0b;
+  std::memcpy(malformed.data() + 4, "WinOLS File", 11);
+  malformed[15] = 0;
+  malformed[16] = 0xdf; malformed[17] = 0x01; // format version 479, LE
+  malformed[20] = 32; // declared file size
+  malformed[24] = 0xff; malformed[25] = 0xff;
+  malformed[26] = 0xff; malformed[27] = 0x7f; // impossible string length
+  const auto badHeader = analyzeOls(malformed.data(), malformed.size());
+  assert(badHeader.ok);
+  assert(!badHeader.headerComplete);
+  assert(!badHeader.renameSafe);
+
+  // Deterministic fuzz smoke test over schema boundaries and arbitrary payload bytes.
+  const uint32_t versions[] = {97, 199, 200, 247, 396, 438, 439, 479, 503, 597, 804, 0xffffffffu};
+  uint32_t state = 0x6d2b79f5u;
+  for (size_t sample = 0; sample < 128; ++sample) {
+    const size_t n = 24 + ((sample * 37) % 2048);
+    Bytes fuzz(n, 0);
+    fuzz[0] = 0x0b;
+    std::memcpy(fuzz.data() + 4, "WinOLS File", 11);
+    fuzz[15] = 0;
+    const uint32_t version = versions[sample % (sizeof(versions) / sizeof(versions[0]))];
+    fuzz[16] = static_cast<uint8_t>(version);
+    fuzz[17] = static_cast<uint8_t>(version >> 8);
+    fuzz[18] = static_cast<uint8_t>(version >> 16);
+    fuzz[19] = static_cast<uint8_t>(version >> 24);
+    for (size_t j = 20; j < n; ++j) {
+      state = state * 1664525u + 1013904223u;
+      fuzz[j] = static_cast<uint8_t>(state >> 24);
+    }
+    const auto result = analyzeOls(fuzz.data(), fuzz.size());
+    assert(result.proposed.size() <= 240);
+    if (!result.headerComplete) assert(!result.renameSafe);
+  }
+
   std::cout<<"core regression checks passed\\n";
 }
