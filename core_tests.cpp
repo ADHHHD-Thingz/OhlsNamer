@@ -25,7 +25,7 @@ int main() {
   assert(selectSourceFilename(L"project.ols", sourceFallback)==sourceFallback);
   assert(inferVehicleBrandFromText(selectSourceFilename(L"project.ols", sourceFallback))==L"Volkswagen");
   assert(inferEcuManufacturerFromText(selectSourceFilename(L"project.ols", sourceFallback))==L"Bosch");
-  assert(selectSourceFilename(L"C:\\\\ROMs\\\\stock.bin", L"other.bin")==L"C:\\\\ROMs\\\\stock.bin");
+  assert(selectSourceFilename(L"C:\\\\ROMs\\\\ori_Alfa_1.4T_510422.bin", L"other.bin")==L"C:\\\\ROMs\\\\ori_Alfa_1.4T_510422.bin");
   const std::string utf16Name="ori_VW_Golf_Bosch_EDC17C46_123456.bin";
   Bytes utf16Bytes;
   for(unsigned char c:utf16Name){utf16Bytes.push_back(c);utf16Bytes.push_back(0);}
