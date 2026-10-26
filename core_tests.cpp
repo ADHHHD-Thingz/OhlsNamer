@@ -15,5 +15,6 @@ int main() {
   assert(!isDefinedMap(L"Bosch 16 bit. 8 x 10", L""));
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
   assert(longName.size()<=240 && longName.find(L"(42).ols")!=ws::npos);
+  assert(proposedFilename(L"BMW",L"320d",L"EDC17C46",L"",0).find(L"(Nil).ols")!=ws::npos);
   std::cout<<"core regression checks passed\\n";
 }
