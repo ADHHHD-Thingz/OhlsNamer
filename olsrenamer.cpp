@@ -116,6 +116,7 @@ static ws summary() {
   if (done) s += L"  |  " + std::to_wstring(done) + L" renamed";
   if (bad) s += L"  |  " + std::to_wstring(bad) + L" failed";
   if (ren) s += L"  |  " + std::to_wstring(ren) + L" ready to rename";
+  if (!app.scan.scanErrors.empty()) s += L"  |  " + std::to_wstring(app.scan.scanErrors.size()) + L" scan warning(s)";
   return s;
 }
 
@@ -390,6 +391,10 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         app.scanned = true;
         setProgress(1, 1);
         setStatus(app.scan.items.empty() ? ws(L"No .ols files were found in that folder.") : summary());
+        if(!app.scan.scanErrors.empty()) {
+          ws msg=L"Some folders could not be scanned ("+std::to_wstring(app.scan.scanErrors.size())+L").\n\nFirst error: "+app.scan.scanErrors.front();
+          MessageBoxW(h,msg.c_str(),L"Scan incomplete",MB_OK|MB_ICONWARNING);
+        }
       }
       refreshList();
       updateButtons();
@@ -407,6 +412,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       setProgress(1, 1);
       ws s = summary();
       if (!app.lastLog.empty()) s += L"  |  log saved";
+      if (!app.scan.journalPath.empty()) s += L"  |  recovery plan saved";
       setStatus(s);
       refreshList();
       updateButtons();
