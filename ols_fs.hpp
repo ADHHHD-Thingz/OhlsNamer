@@ -167,7 +167,7 @@ inline void analyzeAll(Scan& sc, std::atomic<bool>& cancel,
   const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
   const size_t workerCount = std::min<size_t>(total, std::min<unsigned>(4u, hw));
   std::atomic<size_t> next{0};
-  std::atomic<size_t> completed{0};
+  size_t completed = 0;  // guarded by progressMutex
   std::mutex progressMutex;
 
   auto worker = [&]() {
@@ -196,10 +196,9 @@ inline void analyzeAll(Scan& sc, std::atomic<bool>& cancel,
           it.failed = true;
         }
       }
-      const size_t done = completed.fetch_add(1) + 1;
       {
         std::lock_guard<std::mutex> lock(progressMutex);
-        progress(done, total);
+        progress(++completed, total);
       }
     }
   };
