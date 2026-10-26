@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.3
+
+- Added bounds-checked M1 version-directory parsing for version count, data start and per-version record size.
+- Bounded map-marker search and record parsing to the pre-ROM region whenever a valid version directory is found, preventing ROM bytes from being mistaken for map-directory dispatch markers.
+- Exposed version-array diagnostics in the CLI and added regression tests for invalid dimensions and false markers inside ROM payloads.
+- This is a safety correction to dispatch boundaries, not a claim that all version-record or map-record semantics are fully decoded.
+
 ## Unreleased — OLS format research tooling
 
 - Added an independently developed OLS parser as a development-time reference for metadata, version/ROM segments, and calibration-map records.
