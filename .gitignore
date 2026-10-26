@@ -4,3 +4,4 @@
 *.obj
 core_cli
 *.csv
+core_tests
