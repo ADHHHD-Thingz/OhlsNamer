@@ -84,6 +84,20 @@ The independent public parser also documents anchors M2–M7 (`0x11883377`, `0x9
 
 The optional `0x84C0AD36` trailer is reported as a marker; scrambled/encrypted content is not decoded.
 
+## 3.1 Concrete sample cross-check
+
+A supplied 1,771,332-byte format-479 project was inspected read-only (SHA-256 `e5aaf7da564d81967e41cff71bc4c05d43107a0a838fb06f6be7788a2fd51669`).
+
+- The signature is valid; the format version is 479; the declared size equals the actual file size.
+- The metadata is fully consumed using the >=439 no-NUL string rule.
+- The two timestamp words are `1539785900` and `1539788858`, corresponding to plausible UTC times in October 2018 rather than a plausible FILETIME.
+- Metadata slot 23 is `D0000` (hex = 851,968 bytes).
+- M1 is at `0x5FE`; its three preceding words are `[1, 0x10740, 0xD0000]`. This describes two versions, with the first record at `0x10744`.
+- `0x10740 + 4 + 2 * 0xD0000 = 0x1B0744`, exactly the file length. This cross-checks the version directory, record size and software-size metadata.
+- No `FADECAFE/CAFEAFFE` pair occurs in this file, so that descriptor scheme cannot be assumed for every modern OLS project.
+
+This sample supports the header, metadata and M1 interpretations; it does not decode every byte inside the version records.
+
 ## 4. Map records
 
 The current OhlsNamer parser extracts candidate map names/descriptions and counts non-placeholder labels. It is not a full calibration-map decoder. The independent parser attempts to decode map records, axes, cell types, scaling and ROM addresses.
