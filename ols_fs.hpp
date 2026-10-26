@@ -407,9 +407,9 @@ inline void writeLog(const Scan& sc, ws& outPath) {
   GetLocalTime(&t);
   wchar_t stamp[64];
   swprintf(stamp, 64, L"%04d-%02d-%02d %02d%02d%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-  outPath = sc.root;
-  if (!outPath.empty() && outPath.back() != L'\\') outPath += L"\\";
-  outPath += ws(L"OLS Renamer log ") + stamp + L".csv";
+  ws prefix=sc.root;
+  if(!prefix.empty()&&prefix.back()!=L'\\')prefix+=L"\\";
+  ws base=prefix+L"OLS Renamer log "+stamp;
   auto q = [](const ws& s) {
     ws o = L"\"";
     for (wchar_t c : s) {
@@ -424,16 +424,24 @@ inline void writeLog(const Scan& sc, ws& outPath) {
     text += q(it.dir) + L"," + q(it.originalName) + L"," + q(it.finalName) + L"," + q(it.status) + L"\r\n";
   }
   std::string bytes = "\xEF\xBB\xBF" + ols::utf8(text);
-  HANDLE h = CreateFileW(outPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (h == INVALID_HANDLE_VALUE) {
-    outPath.clear();
-    return;
+  HANDLE h=INVALID_HANDLE_VALUE;
+  for(int attempt=1;attempt<=100;++attempt) {
+    outPath=base+(attempt==1?ws():L" "+std::to_wstring(attempt))+L".csv";
+    h=CreateFileW(outPath.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(h!=INVALID_HANDLE_VALUE)break;
+    DWORD e=GetLastError();
+    if(e==ERROR_FILE_EXISTS||e==ERROR_ALREADY_EXISTS)continue;
+    outPath.clear();return;
   }
-  DWORD n = 0;
-  const DWORD want = (DWORD)bytes.size();
-  bool ok = WriteFile(h, bytes.data(), want, &n, nullptr) && n == want;
-  ok = FlushFileBuffers(h) && ok;
-  ok = CloseHandle(h) && ok;
-  if (!ok) outPath.clear();
+  if(h==INVALID_HANDLE_VALUE){outPath.clear();return;}
+  size_t off=0;bool ok=true;
+  while(off<bytes.size()) {
+    DWORD n=0;DWORD want=(DWORD)std::min<size_t>(bytes.size()-off,1<<20);
+    if(!WriteFile(h,bytes.data()+off,want,&n,nullptr)||n==0){ok=false;break;}
+    off+=n;
+  }
+  ok=FlushFileBuffers(h)&&ok;
+  ok=CloseHandle(h)&&ok;
+  if(!ok)outPath.clear();
 }
 }  // namespace olsfs
