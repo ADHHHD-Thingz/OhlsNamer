@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.5
+
+- Added persistent recent-directory picker and restored last-used scan settings.
+- Enabled conservative auto-renaming when some identity fields are missing but structural evidence is valid.
+- Omitted unknown placeholders and retained the existing filename stem when identity is incomplete.
+- Added regression tests for partial identity filename construction.
+
+
 ## 1.3.4
 
 - Hardened M1 version-directory selection: when multiple structurally plausible candidates exist, prefer the one whose data start is corroborated by the M3 marker, rather than a false M1-like sequence inside a ROM payload that happens to calculate to EOF.
