@@ -24,6 +24,12 @@ int main() {
   const char embeddedRaw[] = "Source file: ori_Alfa_Romeo_1.4T_510422.bin";
   Bytes embeddedBytes(embeddedRaw, embeddedRaw + sizeof(embeddedRaw) - 1);
   assert(scanEmbeddedHexFilename(embeddedBytes.data(), embeddedBytes.size()) == L"ori_Alfa_Romeo_1.4T_510422.bin");
+  const std::string sampleSourcePath = "\\\\BUEROTUSSI\\ftp\\Tuningfiles\\ALFA ROMEO\\Giulietta\\Benzin\\1.4 TB 16V 120PS ME7.9.10\\0261S05118\\ori_Alfa_Romeo_Giulietta_1.4T_120Ps_510422.bin";
+  Bytes sampleSourceBytes(sampleSourcePath.begin(), sampleSourcePath.end());
+  const ws sampleSource = scanEmbeddedHexFilename(sampleSourceBytes.data(), sampleSourceBytes.size());
+  assert(sampleSource == L"ori_Alfa_Romeo_Giulietta_1.4T_120Ps_510422.bin");
+  assert(inferVehicleBrandFromText(sampleSource) == L"Alfa Romeo");
+  assert(softwareStemFromSourceFilename(sampleSource) == L"ori_Alfa_Romeo_Giulietta_1.4T_120Ps_510422");
   assert(softwareStemFromSourceFilename(L"project.ols").empty());
   const ws sourceFallback=L"ori_VW_Golf_Bosch_EDC17C46_123456.bin";
   assert(selectSourceFilename(L"project.ols", sourceFallback)==sourceFallback);
