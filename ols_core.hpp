@@ -271,6 +271,12 @@ inline bool isPlaceholderLabel(const ws& raw) {
       L"^(map|kennfeld|kennlinie|einzelwert|value|curve|potential(?:\\s+map)?|pot\\.?\\s*map|"
       L"my\\s+map|new\\s+map|unnamed|untitled)(?:\\s*[#:_-]?\\s*\\d+)?$",
       fl);
+  // WinOLS-generated supplier labels are placeholders, not human-authored map names.
+  static const R PRODUCER_MAP(
+      L"^(bosch|siemens|continental|delphi|denso|marelli|magneti(?:\\s+marelli)?|delco|visteon|temic|"
+      L"keihin|hitachi|sagem|lucas|motorola|trionic|transtron|vdo|kefico|uaes|weifu)\\s+map"
+      L"(?:\\s*[#:_-]?\\s*\\d+)?$",
+      fl);
   static const R ONLYNUM(L"^\\d+$");
   static const R DIMONLY(L"^\\d+\\s*[x\x00d7*]\\s*\\d+$", fl);
   static const R BIT(L"\\d+\\s*-?\\s*bits?\\b", fl);
@@ -297,6 +303,7 @@ inline bool isPlaceholderLabel(const ws& raw) {
   if (ENV.count(n)) return true;
   if (n.rfind(L"imported from", 0) == 0) return true;
   if (std::regex_search(s, GENERIC)) return true;
+  if (std::regex_search(s, PRODUCER_MAP)) return true;
   if (std::regex_search(s, ONLYNUM)) return true;
   if (std::regex_search(s, DIMONLY)) return true;
 
@@ -538,6 +545,7 @@ struct VersionDirectory {
 inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory& out) {
   if (!d || n < 16) return false;
   bool found = false;
+  bool bestHasM3 = false;
   size_t bestTrailing = n + 1;
   for (size_t p = 12; p + 4 <= n; ++p) {
     if (rd32(d, p) != 0x42007899u) continue;
@@ -545,24 +553,30 @@ inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory&
     const uint32_t start = rd32(d, p - 8);
     const uint32_t recordSize = rd32(d, p - 4);
     const uint64_t count64 = (uint64_t)countMinusOne + 1u;
-    if (count64 == 0 || count64 > 64 || recordSize == 0 ||
+    if (count64 > 64 || recordSize == 0 ||
         recordSize > 64u * 1024u * 1024u) continue;
     if (start < p + 4 || (uint64_t)start + 4u > n) continue;
     const uint64_t end64 = (uint64_t)start + 4u + (uint64_t)recordSize * count64;
     if (end64 > n) continue;
+
+    // M3 (0x98728833) is commonly the first word at version_data_start.
+    // Treat it as corroborating structure, not an unconditional requirement:
+    // older/unusual schema variants may omit it. This prevents a random M1-like
+    // sequence in a ROM payload from winning merely because its arithmetic ends
+    // exactly at EOF.
+    const bool hasM3 = rd32(d, start) == 0x98728833u;
     const size_t trailing = n - (size_t)end64;
-    // Prefer a directory whose records end exactly at EOF; otherwise choose the
-    // valid candidate leaving the least trailing data. This rejects most marker
-    // collisions inside ROM bytes without assuming every project has no trailer.
-    if (!found || trailing < bestTrailing) {
+    const bool better = !found || (hasM3 && !bestHasM3) ||
+                        (hasM3 == bestHasM3 && trailing < bestTrailing);
+    if (better) {
       found = true;
+      bestHasM3 = hasM3;
       bestTrailing = trailing;
       out.markerOffset = p;
       out.count = (uint32_t)count64;
       out.dataStart = start;
       out.recordSize = recordSize;
       out.endOffset = (size_t)end64;
-      if (trailing == 0) break;
     }
   }
   return found;
