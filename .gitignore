@@ -1,0 +1,6 @@
+*.exe
+*.res
+*.o
+*.obj
+core_cli
+*.csv
