@@ -98,6 +98,12 @@ A supplied 1,771,332-byte format-479 project was inspected read-only (SHA-256 `e
 
 This sample supports the header, metadata and M1 interpretations; it does not decode every byte inside the version records.
 
+## 3.2 Version-array dispatch and map scan boundary (v1.3.3)
+
+OhlsNamer now validates the M1 version directory before using it as a parsing boundary. The three little-endian words before M1 are checked as `[version_count - 1, version_data_start, version_record_size]`; count, record size, arithmetic and in-file end are bounded. If validation succeeds, map-marker discovery and map-record parsing are restricted to bytes before `version_data_start`, so marker-like bytes inside embedded ROM versions cannot be dispatched as map records. The CLI exposes the validated version count, data start and record size.
+
+This is a dispatch-boundary fix, not a complete semantic decoding of M1/M2. The independent parser calls `0x11883377` M2 a version-array dispatch marker, while OhlsNamer's existing map candidate logic treats the bytes after it as a possible compressed/count-prefixed map block. In the supplied format-479 sample, M2 is at `0x84E`, M1 at `0x5FE`, and the version array begins at `0x10740`; therefore M2 remains within the pre-ROM region and is still only a candidate marker. Its universal meaning and the corpus map-count disagreements remain unresolved.
+
 ## 4. Map records
 
 The current OhlsNamer parser extracts candidate map names/descriptions and counts non-placeholder labels. It is not a full calibration-map decoder. The independent parser attempts to decode map records, axes, cell types, scaling and ROM addresses.
