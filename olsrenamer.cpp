@@ -2,6 +2,8 @@
 // "Brand Model ECU SoftwareVersion (named maps).ols" from their header.
 #define NOMINMAX
 #include <thread>
+#include <vector>
+#include <cwchar>
 
 #include "ols_fs.hpp"
 
@@ -26,6 +28,8 @@ struct App {
        status, list;
   HFONT font = nullptr;
   int dpi = 96;
+  std::vector<ws> recentDirs;
+  ws lastDirectory;
   olsfs::Scan scan;
   std::thread worker;
   std::atomic<bool> busy{false}, cancel{false};
@@ -37,6 +41,88 @@ struct App {
 static int S(int v) { return MulDiv(v, app.dpi, 96); }
 
 static void setStatus(const ws& s) { SetWindowTextW(app.status, s.c_str()); }
+
+static constexpr size_t kRecentDirectoryLimit = 10;
+static constexpr wchar_t kSettingsKey[] = L"Software\\OhlsNamer";
+
+static bool readRegString(HKEY key, const wchar_t* name, ws& value) {
+  DWORD type = 0, bytes = 0;
+  if (RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytes) != ERROR_SUCCESS ||
+      type != REG_SZ || bytes < sizeof(wchar_t) || bytes > 65536)
+    return false;
+  std::vector<wchar_t> buffer(bytes / sizeof(wchar_t) + 1, L'\\0');
+  if (RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE*>(buffer.data()), &bytes) != ERROR_SUCCESS)
+    return false;
+  buffer.back() = L'\\0';
+  value = buffer.data();
+  return !value.empty();
+}
+
+static void loadSettings() {
+  HKEY key = nullptr;
+  if (RegOpenKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) return;
+  readRegString(key, L"LastDirectory", app.lastDirectory);
+  app.recentDirs.clear();
+  for (size_t i = 0; i < kRecentDirectoryLimit; ++i) {
+    wchar_t name[32];
+    swprintf(name, sizeof(name) / sizeof(name[0]), L"Recent%u", static_cast<unsigned>(i));
+    ws path;
+    if (readRegString(key, name, path) && std::find_if(app.recentDirs.begin(), app.recentDirs.end(),
+        [&](const ws& existing) { return ols::lower(existing) == ols::lower(path); }) == app.recentDirs.end())
+      app.recentDirs.push_back(path);
+  }
+  DWORD type = 0, bytes = sizeof(DWORD), recursive = BST_CHECKED;
+  if (RegQueryValueExW(key, L"IncludeSubfolders", nullptr, &type,
+                       reinterpret_cast<BYTE*>(&recursive), &bytes) == ERROR_SUCCESS &&
+      type == REG_DWORD)
+    SendMessageW(app.chkSub, BM_SETCHECK, recursive ? BST_CHECKED : BST_UNCHECKED, 0);
+  RegCloseKey(key);
+  SendMessageW(app.edFolder, CB_RESETCONTENT, 0, 0);
+  for (const ws& path : app.recentDirs) SendMessageW(app.edFolder, CB_ADDSTRING, 0, (LPARAM)path.c_str());
+  SendMessageW(app.edFolder, CB_SETMINVISIBLE, 10, 0);
+  if (!app.lastDirectory.empty()) SetWindowTextW(app.edFolder, app.lastDirectory.c_str());
+  else if (!app.recentDirs.empty()) SetWindowTextW(app.edFolder, app.recentDirs.front().c_str());
+}
+
+static void saveSettings() {
+  HKEY key = nullptr;
+  DWORD disposition = 0;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key,
+                      &disposition) != ERROR_SUCCESS) return;
+  DWORD recursive = SendMessageW(app.chkSub, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1u : 0u;
+  RegSetValueExW(key, L"IncludeSubfolders", 0, REG_DWORD,
+                 reinterpret_cast<const BYTE*>(&recursive), sizeof(recursive));
+  if (!app.lastDirectory.empty())
+    RegSetValueExW(key, L"LastDirectory", 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(app.lastDirectory.c_str()),
+                   static_cast<DWORD>((app.lastDirectory.size() + 1) * sizeof(wchar_t)));
+  for (size_t i = 0; i < kRecentDirectoryLimit; ++i) {
+    wchar_t name[32];
+    swprintf(name, sizeof(name) / sizeof(name[0]), L"Recent%u", static_cast<unsigned>(i));
+    if (i < app.recentDirs.size()) {
+      const ws& path = app.recentDirs[i];
+      RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(path.c_str()),
+                     static_cast<DWORD>((path.size() + 1) * sizeof(wchar_t)));
+    } else {
+      RegDeleteValueW(key, name);
+    }
+  }
+  RegCloseKey(key);
+}
+
+static void rememberDirectory(const ws& path) {
+  if (path.empty()) return;
+  app.lastDirectory = path;
+  app.recentDirs.erase(std::remove_if(app.recentDirs.begin(), app.recentDirs.end(),
+      [&](const ws& existing) { return ols::lower(existing) == ols::lower(path); }), app.recentDirs.end());
+  app.recentDirs.insert(app.recentDirs.begin(), path);
+  if (app.recentDirs.size() > kRecentDirectoryLimit) app.recentDirs.resize(kRecentDirectoryLimit);
+  SendMessageW(app.edFolder, CB_RESETCONTENT, 0, 0);
+  for (const ws& recent : app.recentDirs) SendMessageW(app.edFolder, CB_ADDSTRING, 0, (LPARAM)recent.c_str());
+  SetWindowTextW(app.edFolder, path.c_str());
+  saveSettings();
+}
+
 
 static void setMarquee(bool on) {
   LONG st = GetWindowLongW(app.progress, GWL_STYLE);
@@ -314,10 +400,11 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         return c;
       };
       app.lblFolder = mk(L"STATIC", L"Folder:", SS_LEFT, 0);
-      app.edFolder = mk(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, ID_FOLDER, WS_EX_CLIENTEDGE);
+      app.edFolder = mk(L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL, ID_FOLDER, WS_EX_CLIENTEDGE);
       app.btnBrowse = mk(L"BUTTON", L"Browse...", WS_TABSTOP | BS_PUSHBUTTON, ID_BROWSE);
       app.chkSub = mk(L"BUTTON", L"Include subfolders", WS_TABSTOP | BS_AUTOCHECKBOX, ID_SUB);
       SendMessageW(app.chkSub, BM_SETCHECK, BST_CHECKED, 0);
+      loadSettings();
       app.btnScan = mk(L"BUTTON", L"Scan", WS_TABSTOP | BS_DEFPUSHBUTTON, ID_SCAN);
       app.btnRename = mk(L"BUTTON", L"Rename files", WS_TABSTOP | BS_PUSHBUTTON, ID_RENAME);
       app.btnCancel = mk(L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, ID_CANCEL);
@@ -351,6 +438,19 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_COMMAND:
       switch (LOWORD(w)) {
         case ID_BROWSE: browse(); break;
+        case ID_FOLDER:
+          if (HIWORD(w) == CBN_SELCHANGE) {
+            LRESULT selected = SendMessageW(app.edFolder, CB_GETCURSEL, 0, 0);
+            if (selected != CB_ERR) {
+              LRESULT length = SendMessageW(app.edFolder, CB_GETLBTEXTLEN, selected, 0);
+              if (length > 0 && length < 32768) {
+                std::vector<wchar_t> path(static_cast<size_t>(length) + 1, L'\\0');
+                SendMessageW(app.edFolder, CB_GETLBTEXT, selected, (LPARAM)path.data());
+                SetWindowTextW(app.edFolder, path.data());
+              }
+            }
+          }
+          break;
         case ID_SCAN:
         case IDOK: startScan(); break;
         case ID_RENAME: startRename(); break;
@@ -400,6 +500,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         setStatus(L"Cancelled.");
       } else {
         app.scanned = true;
+        if (!app.scan.root.empty()) rememberDirectory(app.scan.root);
         setProgress(1, 1);
         setStatus(app.scan.items.empty() ? ws(L"No .ols files were found in that folder.") : summary());
         if(!app.scan.scanErrors.empty()) {
@@ -442,6 +543,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       DestroyWindow(h);
       return 0;
     case WM_DESTROY:
+      saveSettings();
       PostQuitMessage(0);
       return 0;
   }
@@ -449,7 +551,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 
 int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR cmd, int show) {
-  INITCOMMONCONTROLSEX ic = {sizeof(ic), ICC_PROGRESS_CLASS | ICC_LISTVIEW_CLASSES};
+  INITCOMMONCONTROLSEX ic = {sizeof(ic), ICC_PROGRESS_CLASS | ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES};
   InitCommonControlsEx(&ic);
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   WNDCLASSEXW wc = {sizeof(wc)};
