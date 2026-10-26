@@ -465,17 +465,34 @@ inline ws firstFilled(const std::vector<ws>& values) {
   return L"";
 }
 
+inline bool isUnknownNamePart(const ws& raw) {
+  ws value = lower(jsTrim(removeNul(raw)));
+  return value.empty() || value == L"unknown" || value == L"-" || value == L"?" || value == L"%";
+}
+
 inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, const ws& software,
                            int definedMaps) {
-  ws prefix=filenamePart(brand)+L" "+filenamePart(model)+L" "+filenamePart(ecu);
-  ws sw=firstFilled({software});
-  if(!sw.empty()&&lower(filenamePart(sw))!=lower(filenamePart(ecu)))prefix+=L" "+filenamePart(sw);
-  ws countLabel=definedMaps==0?ws(L"Nil"):std::to_wstring(definedMaps);
-  ws suffix=L" ("+countLabel+L").ols";
-  size_t cap=240>suffix.size()?240-suffix.size():1;
-  if(prefix.size()>cap)prefix.resize(cap);
-  while(!prefix.empty()&&(prefix.back()==L' '||prefix.back()==L'.'))prefix.pop_back();
-  return prefix+suffix;
+  ws prefix;
+  auto appendPart = [&](const ws& raw) {
+    if (isUnknownNamePart(raw)) return;
+    ws part = filenamePart(raw);
+    if (part.empty() || lower(part) == L"unknown") return;
+    if (!prefix.empty()) prefix += L" ";
+    prefix += part;
+  };
+  appendPart(brand);
+  appendPart(model);
+  appendPart(ecu);
+  ws sw = firstFilled({software});
+  if (!sw.empty() && (isUnknownNamePart(ecu) || lower(filenamePart(sw)) != lower(filenamePart(ecu))))
+    appendPart(sw);
+  if (prefix.empty()) prefix = L"OLS Project";
+  ws countLabel = definedMaps == 0 ? ws(L"Nil") : std::to_wstring(definedMaps);
+  ws suffix = L" (" + countLabel + L").ols";
+  size_t cap = 240 > suffix.size() ? 240 - suffix.size() : 1;
+  if (prefix.size() > cap) prefix.resize(cap);
+  while (!prefix.empty() && (prefix.back() == L' ' || prefix.back() == L'.')) prefix.pop_back();
+  return prefix + suffix;
 }
 
 inline ws disambiguate(const ws& desired, std::set<ws>& taken) {
