@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.8
+
+- Remove repeated identity phrases embedded in longer metadata slots, such as a make repeated inside the model name.
+- Keep software fallback limited to a plausible identifier extracted from the embedded source filename; descriptive names and ECU identifiers are not copied into the software slot.
+- Add regression coverage for partial phrase overlap and duplicate software/ECU slots.
+
+
 ## 1.3.7
 
 - Treat embedded original HEX/BIN names as evidence only, not as ready-made software-version strings.
