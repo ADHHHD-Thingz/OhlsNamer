@@ -449,6 +449,7 @@ struct Analysis {
   ws brand = L"Unknown", model = L"Unknown", ecu = L"Unknown", software;
   ws ecuManufacturer = L"Unknown", hardwareNumber, productionNumber, engineCode, vehicleYear;
   ws originalFileName, embeddedHexFilename, softwareSource = L"unknown", ecuSource = L"unknown";
+  std::vector<std::pair<ws, ws>> metadata;
   size_t mapCount = 0;
   int definedCount = 0, skippedCount = 0;
   ws proposed;
@@ -541,6 +542,7 @@ inline Meta parseMetadata(const uint8_t* d, size_t n, size_t off, uint32_t schem
     warnings.push_back(L"Header stopped at project timestamp.");
     return m;
   }
+  m["project_timestamp_raw"] = std::to_wstring(rd64(d, p));
   p += 8;
   for (const auto& f : AFTER_TIME)
     if (!readReq(f.key, f.label)) return m;
@@ -955,6 +957,9 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   auto get=[&](const char*k){auto it=meta.find(k);return it==meta.end()?ws():it->second;};
   a.headerComplete=get("__header_complete")==L"1";
   if(!a.headerComplete)a.warnings.push_back(L"Required metadata header is incomplete.");
+  for(const auto& kv:meta) {
+    if(!kv.first.empty()&&kv.first[0]!='_')a.metadata.push_back({fromAscii(kv.first.c_str()),kv.second});
+  }
   ws rawBrand=firstFilled({get("make")});ws brand=normalizeVehicleBrand(rawBrand);
   ws model=firstFilled({get("model"),get("type"),get("engine_code")});if(model.empty())model=L"Unknown";
   ws explicitEcu=firstFilled({get("ecu_name")});ws inferredEcu=explicitEcu.empty()?inferEcuFamily(d,n):ws();
