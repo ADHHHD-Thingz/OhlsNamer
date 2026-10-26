@@ -106,7 +106,7 @@ This is a dispatch-boundary fix, not a complete semantic decoding of M1/M2. The 
 
 ## 4. Map records
 
-The current OhlsNamer parser extracts candidate map names/descriptions and counts non-placeholder labels. It is not a full calibration-map decoder. The independent parser attempts to decode map records, axes, cell types, scaling and ROM addresses.
+The current OhlsNamer parser extracts candidate map names/descriptions and counts non-placeholder labels. Exact supplier-only labels such as “Bosch map”, “Denso map” and “Siemens map” are treated as generic placeholders, not human-named maps. It is not a full calibration-map decoder. The independent parser attempts to decode map records, axes, cell types, scaling and ROM addresses.
 
 The latest completed tri-parser audit against 305 tracked OLS projects found:
 - Python corpus extractor: metadata complete for 305/305.
