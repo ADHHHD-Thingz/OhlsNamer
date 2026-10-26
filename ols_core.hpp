@@ -1178,7 +1178,7 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   }
   a.skippedCount=(int)ex.maps.size()-a.definedCount;a.mapSource=ex.source;
   a.proposed=proposedFilename(brand,model,ecu,software,a.definedCount);
-  a.renameSafe=a.headerComplete&&a.formatSizeConsistent&&!rawBrand.empty()&&!get("model").empty()&&!explicitEcu.empty()&&(ex.source=="map directory"||ex.source=="compressed map directory");
+  a.renameSafe=a.headerComplete&&a.formatSizeConsistent&&a.versionDirectoryValid&&!rawBrand.empty()&&!get("model").empty()&&!explicitEcu.empty()&&(ex.source=="map directory"||ex.source=="compressed map directory");
   if(!a.renameSafe)a.warnings.push_back(L"Identity or structured map-directory evidence is incomplete; automatic rename is disabled.");
   return a;
 }
