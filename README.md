@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.3.4
+# OhlsNamer (OLS Renamer) — v1.3.5
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
