@@ -208,6 +208,46 @@ static void browse() {
 
 static LRESULT onNotify(LPNMHDR nh) {
   if (nh->hwndFrom != app.list) return 0;
+  if (nh->code == NM_DBLCLK) {
+    const auto* act = reinterpret_cast<const NMITEMACTIVATE*>(nh);
+    if (act->iItem >= 0 && (size_t)act->iItem < app.scan.items.size()) {
+      const auto& it = app.scan.items[(size_t)act->iItem];
+      const auto& a = it.a;
+      if (!a.ok) {
+        MessageBoxW(app.hwnd, a.error.c_str(), L"OLS analysis", MB_ICONWARNING);
+        return 0;
+      }
+      ws details = L"File: " + it.rel +
+        L"\nWinOLS format version: " + std::to_wstring(a.formatVersion) +
+        L"\nHeader complete: " + ws(a.headerComplete ? L"yes" : L"no") +
+        L"\nDeclared size consistent: " + ws(a.formatSizeConsistent ? L"yes" : L"no") +
+        L"\n\nVehicle brand: " + a.brand +
+        L"\nVehicle model: " + a.model +
+        L"\nVehicle year: " + a.vehicleYear +
+        L"\nEngine code: " + a.engineCode +
+        L"\nECU model/family: " + a.ecu +
+        L"\nECU identity source: " + a.ecuSource +
+        L"\nECU manufacturer: " + a.ecuManufacturer +
+        L"\nHardware number: " + a.hardwareNumber +
+        L"\nSoftware number: " + a.software +
+        L"\nSoftware source: " + a.softwareSource +
+        L"\nProduction number: " + a.productionNumber +
+        L"\nOriginal source filename: " + a.originalFileName +
+        L"\nEmbedded HEX/BIN filename: " + a.embeddedHexFilename +
+        L"\n\nMap records recovered: " + std::to_wstring(a.mapCount) +
+        L"\nDefined maps: " + std::to_wstring(a.definedCount) +
+        L"\nSkipped maps: " + std::to_wstring(a.skippedCount) +
+        L"\nMap extraction source: " + ols::fromAscii(a.mapSource.c_str()) +
+        L"\nAutomatic rename safe: " + ws(a.renameSafe ? L"yes" : L"no") +
+        L"\n\nProposed filename: " + a.proposed;
+      if (!a.warnings.empty()) {
+        details += L"\n\nWarnings:";
+        for (const auto& w : a.warnings) details += L"\n- " + w;
+      }
+      MessageBoxW(app.hwnd, details.c_str(), L"OLS analysis details", MB_OK | (a.renameSafe ? MB_ICONINFORMATION : MB_ICONWARNING));
+    }
+    return 0;
+  }
   if (nh->code == LVN_GETDISPINFOW) {
     auto* di = (NMLVDISPINFOW*)nh;
     if (!(di->item.mask & LVIF_TEXT) || (size_t)di->item.iItem >= app.scan.items.size()) return 0;
