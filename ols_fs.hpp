@@ -200,14 +200,29 @@ inline size_t renameCount(const Scan& sc) {
   return n;
 }
 
+inline bool appendRecoveryEvent(const ws& path,const ws& source,const ws& target,const ws& status,const ws& current) {
+  auto quote=[](const ws& v){ws q=L"\"";for(wchar_t c:v){if(c==L'\"')q+=L'\"';q+=c;}return q+L"\"";};
+  ws line=L"event,"+quote(source)+L","+quote(target)+L","+quote(status)+L","+quote(current)+L"\r\n";
+  std::string bytes=ols::utf8(line);
+  HANDLE h=CreateFileW(path.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+  if(h==INVALID_HANDLE_VALUE)return false;
+  size_t off=0;bool ok=true;
+  while(off<bytes.size()) {
+    DWORD wrote=0;DWORD want=(DWORD)std::min<size_t>(bytes.size()-off,1<<20);
+    if(!WriteFile(h,bytes.data()+off,want,&wrote,nullptr)||wrote==0){ok=false;break;}
+    off+=wrote;
+  }
+  ok=FlushFileBuffers(h)&&ok;ok=CloseHandle(h)&&ok;
+  return ok;
+}
 inline bool writeRecoveryJournal(const Scan& sc, ws& outPath) {
   SYSTEMTIME t; GetLocalTime(&t);
   wchar_t stamp[64];
   swprintf(stamp, 64, L"%04d-%02d-%02d %02d%02d%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
   auto quote=[](const ws& v){ws q=L"\"";for(wchar_t c:v){if(c==L'\"')q+=L'\"';q+=c;}return q+L"\"";};
-  ws text=L"Source,Target,Status\r\n";
+  ws text=L"Record type,Source,Target,Status,Current path\r\n";
   for(const auto& it:sc.items) if(it.willRename&&!it.renamed)
-    text+=quote(it.path())+L","+quote(it.dir+L"\\"+it.finalName)+L",planned\r\n";
+    text+=L"planned,"+quote(it.path())+L","+quote(it.dir+L"\\"+it.finalName)+L",planned,"+quote(it.path())+L"\r\n";
   std::string bytes="\xEF\xBB\xBF"+ols::utf8(text);
   ws prefix=sc.root; if(!prefix.empty()&&prefix.back()!=L'\\')prefix+=L"\\";
   for(int attempt=1;attempt<=100;++attempt) {
@@ -251,6 +266,13 @@ inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progr
     } else {
       it.failed = true;
       it.status = L"Not renamed: " + msg;
+    }
+    if(!sc.journalPath.empty()) {
+      ws source=it.dir+L"\\"+it.originalName;
+      ws target=it.dir+L"\\"+it.finalName;
+      ws current=ok?it.path():p.cur;
+      if(!appendRecoveryEvent(sc.journalPath,source,target,ok?ws(L"renamed"):it.status,current))
+        it.status+=L" [recovery journal update failed]";
     }
     progress(finished, total);
   };
