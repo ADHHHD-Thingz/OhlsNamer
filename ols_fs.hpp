@@ -393,8 +393,13 @@ inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progr
     ws orig = it.dir + L"\\" + it.originalName;
     if (ols::lower(p.cur) != ols::lower(orig)) {
       if (!MoveFileExW(p.cur.c_str(), orig.c_str(), 0)) {
+        DWORD rollbackError=GetLastError();
         ws recoveryPath=p.cur;
-        finish(p,false,L"ROLLBACK FAILED; file remains at "+recoveryPath+L" ("+lastError(GetLastError())+L")");
+        size_t slash=recoveryPath.find_last_of(L"\\/");
+        it.name=slash==ws::npos?recoveryPath:recoveryPath.substr(slash+1);
+        size_t relSlash=it.rel.find_last_of(L"\\/");
+        it.rel=(relSlash==ws::npos?ws():it.rel.substr(0,relSlash+1))+it.name;
+        finish(p,false,L"ROLLBACK FAILED; file remains at "+recoveryPath+L" ("+lastError(rollbackError)+L")");
         continue;
       }
     }
