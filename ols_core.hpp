@@ -502,6 +502,9 @@ struct Analysis {
   ws error;
   std::vector<ws> warnings;
   uint32_t formatVersion = 0;
+  bool versionDirectoryValid = false;
+  uint32_t versionCount = 0, versionRecordSize = 0;
+  size_t versionDataStart = 0;
   ws brand = L"Unknown", model = L"Unknown", ecu = L"Unknown", software;
   ws ecuManufacturer = L"Unknown", hardwareNumber, productionNumber, engineCode, vehicleYear;
   ws brandSource = L"unknown";
@@ -520,6 +523,49 @@ inline uint32_t rd32(const uint8_t* d, size_t p) {
 }
 inline uint64_t rd64(const uint8_t* d, size_t p) {
   return (uint64_t)rd32(d, p) | ((uint64_t)rd32(d, p + 4) << 32);
+}
+
+struct VersionDirectory {
+  size_t markerOffset = 0;
+  uint32_t count = 0;
+  size_t dataStart = 0;       // start of version records, normally begins with M3
+  uint32_t recordSize = 0;
+  size_t endOffset = 0;
+};
+
+// M1 is a version-directory fence, not a map-directory marker.
+// Its preceding words are [version_count - 1, version_data_start, version_record_size].
+inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory& out) {
+  if (!d || n < 16) return false;
+  bool found = false;
+  size_t bestTrailing = n + 1;
+  for (size_t p = 12; p + 4 <= n; ++p) {
+    if (rd32(d, p) != 0x42007899u) continue;
+    const uint32_t countMinusOne = rd32(d, p - 12);
+    const uint32_t start = rd32(d, p - 8);
+    const uint32_t recordSize = rd32(d, p - 4);
+    const uint64_t count64 = (uint64_t)countMinusOne + 1u;
+    if (count64 == 0 || count64 > 64 || recordSize == 0 ||
+        recordSize > 64u * 1024u * 1024u) continue;
+    if (start < p + 4 || (uint64_t)start + 4u > n) continue;
+    const uint64_t end64 = (uint64_t)start + 4u + (uint64_t)recordSize * count64;
+    if (end64 > n) continue;
+    const size_t trailing = n - (size_t)end64;
+    // Prefer a directory whose records end exactly at EOF; otherwise choose the
+    // valid candidate leaving the least trailing data. This rejects most marker
+    // collisions inside ROM bytes without assuming every project has no trailer.
+    if (!found || trailing < bestTrailing) {
+      found = true;
+      bestTrailing = trailing;
+      out.markerOffset = p;
+      out.count = (uint32_t)count64;
+      out.dataStart = start;
+      out.recordSize = recordSize;
+      out.endOffset = (size_t)end64;
+      if (trailing == 0) break;
+    }
+  }
+  return found;
 }
 
 inline bool isText(const uint8_t* d, size_t off, size_t n) {
@@ -838,9 +884,11 @@ struct Marker {
   uint32_t count;
 };
 
-inline std::vector<Marker> findMarkers(const uint8_t* d, size_t n) {
+inline std::vector<Marker> findMarkers(const uint8_t* d, size_t n, size_t scanLimit) {
   std::vector<Marker> out;
-  int64_t limit = std::min<int64_t>((int64_t)n - 9, 8 * 1024 * 1024);
+  const size_t boundedSize = std::min(n, scanLimit);
+  if (boundedSize < 9) return out;
+  int64_t limit = std::min<int64_t>((int64_t)boundedSize - 9, 8 * 1024 * 1024);
   for (int64_t i = 0x40; i <= limit; i++) {
     if (d[i] == 0x77 && d[i + 1] == 0x33 && d[i + 2] == 0x88 && d[i + 3] == 0x11) {
       uint8_t compressed = d[i + 4];
@@ -899,17 +947,24 @@ inline Candidate readMapBlock(const uint8_t* d, size_t n, size_t start, uint32_t
 
 inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
                              std::vector<ws>& warnings) {
-  auto markers = findMarkers(d, n);
+  VersionDirectory versionDirectory;
+  const bool haveVersionDirectory = locateVersionDirectory(d, n, versionDirectory);
+  // Never dispatch map parsing into the embedded ROM/version array. M1's
+  // version_data_start marks the beginning of that array; maps precede it.
+  const size_t mapLimit = haveVersionDirectory ? versionDirectory.dataStart : n;
+  auto markers = findMarkers(d, mapLimit, mapLimit);
+  if (!haveVersionDirectory)
+    warnings.push_back(L"Validated M1 version directory not found; map marker search cannot be bounded by the ROM array.");
   bool haveBest = false;
   Candidate best;
   for (const auto& marker : markers) {
     try {
       Bytes block;
       const uint8_t* bp = d;
-      size_t bn = n;
+      size_t bn = mapLimit;
       if (marker.compressed) {
         Bytes raw;
-        if (!unzlib(d + marker.at, n - marker.at, raw)) throw Err("inflate failed");
+        if (marker.at >= mapLimit || !unzlib(d + marker.at, mapLimit - marker.at, raw)) throw Err("inflate failed");
         block.assign(d, d + marker.at);
         block.insert(block.end(), raw.begin(), raw.end());
         bp = block.data();
@@ -1100,6 +1155,15 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   bool boschPart=std::regex_match(metadataSoftware,std::wregex(L"(0261S[0-9]{5}|0281[0-9]{6})",std::regex::ECMAScript|std::regex::icase))&&lower(ecuManufacturer).find(L"bosch")!=ws::npos;
   bool useFallback=!embeddedStem.empty()&&(generic||boschPart);
   ws software=useFallback?embeddedStem:metadataSoftware;
+  VersionDirectory versionDirectory;
+  a.versionDirectoryValid=locateVersionDirectory(d,n,versionDirectory);
+  if(a.versionDirectoryValid) {
+    a.versionCount=versionDirectory.count;
+    a.versionDataStart=versionDirectory.dataStart;
+    a.versionRecordSize=versionDirectory.recordSize;
+  } else {
+    a.warnings.push_back(L"Could not validate the embedded ROM version directory (M1).");
+  }
   Candidate ex=extractMaps(d,n,formatVersion,a.warnings);
   a.ok=true;a.formatVersion=formatVersion;a.brand=brand;a.model=model;a.ecu=ecu;a.software=software;
   a.ecuManufacturer=ecuManufacturer;a.brandSource=!rawBrand.empty()?L"metadata":(inferredBrand!=L"Unknown"?L"inferred from source filename":L"unknown");
