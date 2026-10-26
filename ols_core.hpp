@@ -53,6 +53,7 @@ inline wchar_t lowerCh(wchar_t c) {
 inline ws lower(const ws& s) {
   ws o = s;
   for (auto& c : o) c = lowerCh(c);
+  return o;
 }
 
 // Normalize aliases for comparisons while preserving unknown raw metadata.
