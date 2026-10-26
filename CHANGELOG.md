@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.6
+
+- Count only human-named map labels; generated supplier placeholders such as “Bosch map”, “Denso map”, and “Siemens map 2” do not inflate the map count, even when a description is populated.
+- Bound M1 version-directory discovery to the serialized header region to avoid dispatching marker-like bytes found deep in ROM payloads.
+- Analyze files with a bounded pool of up to four workers for better throughput on large databases while limiting concurrent file-memory use; progress callbacks remain serialized and monotonic.
+- Added live GUI filtering across filenames, vehicle/ECU identity and status, plus an “Only rename candidates” view for large scan results.
+- Kept the persistent recent-directory dropdown and last-used scan preferences.
+- Added regression coverage for supplier-generated labels and deep false M1 markers.
+
+
 ## 1.3.5
 
 - Added persistent recent-directory picker and restored last-used scan settings.
