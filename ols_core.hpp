@@ -325,12 +325,15 @@ inline bool isHexdump(const ws& description) {
 }
 
 inline bool isDefinedMap(const ws& name, const ws& description) {
-  if (isHexdump(description)) return false;
-  for (const ws* label : {&name, &description}) {
-    ws t = jsTrim(removeNul(*label));
-    if (!t.empty() && !isPlaceholderLabel(t)) return true;
-  }
-  return false;
+  // WinOLS often generates supplier labels ("Bosch map", "Denso map",
+  // "Siemens map 2", etc.) for automatically detected maps. Those are not
+  // human-authored map names and must never inflate the filename map count,
+  // even if a description field happens to contain dimensions or other text.
+  // Count the map's actual name only; a description is supporting metadata,
+  // not a substitute for a human-assigned name.
+  (void)description;
+  ws t = jsTrim(removeNul(name));
+  return !t.empty() && !isPlaceholderLabel(t);
 }
 
 inline bool isIdent(const ws& s) {
