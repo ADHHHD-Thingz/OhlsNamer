@@ -81,7 +81,17 @@ inline const std::vector<ws>& vehicleBrandCatalogue() {
     L"Volvo",L"Voyah",L"Wey",L"Wuling",L"XPeng",L"Yugo",L"Zeekr",L"Zotye",L"FAW",L"Dongfeng",L"JMC",
     L"Maxus",L"LDV",L"TVR",L"Caterham",L"Plymouth",L"Pontiac",L"Oldsmobile",L"Saturn",L"Geo",L"MAN",
     L"DAF",L"Setra",L"Temsa",L"Yutong",L"King Long",L"Hino",L"UD Trucks",L"Kenworth",L"Freightliner",
-    L"Mack",L"Western Star",L"General Motors",L"SAIC",L"Prodrive",L"TVR"
+    L"Mack",L"Western Star",L"General Motors",L"SAIC",L"Prodrive",L"TVR",
+    L"Ashok Leyland",L"Baojun",L"Brabus",L"Datsun",L"De Tomaso",L"Eagle",L"Exeed",L"Fisker",
+    L"GAZ",L"Gonow",L"Hindustan",L"Hudson",L"Lifan",L"Maruti Suzuki",L"Maybach",L"Moskvich",
+    L"Polaris",L"Rivian",L"Scion",L"Shacman",L"Studebaker",L"Talbot",L"Tatra",L"UAZ",L"Zastava",
+    L"ZIL",L"Indian Motorcycle",L"KTM",L"Kawasaki",L"Triumph",L"Royal Enfield",L"Harley Davidson",
+    L"Aprilia",L"Piaggio",L"MV Agusta",L"Benelli",L"CFMoto",L"Can Am",L"BRP",L"Yamaha Motor",
+    L"Sany",L"XCMG",L"JCB",L"Case IH",L"New Holland",L"Fendt",L"Claas",L"International Harvester",
+    L"Belarus",L"Zetor",L"Valtra",L"Same Deutz-Fahr",L"Doosan",L"Bobcat",L"Terex",L"JLG",
+    L"Takeuchi",L"Hitachi Construction",L"Hyundai Construction",L"Volvo Construction",L"McCormick",
+    L"Mahindra Tractors",L"Deutz-Fahr",L"Steyr",L"Kioti",L"Yanmar Tractors",L"Ferris",L"Toro",
+    L"Club Car",L"John Deere Gator",L"Arctic Cat",L"Sea-Doo",L"Ski-Doo"
   }; return v;
 }
 inline const std::vector<ws>& ecuManufacturerCatalogue() {
@@ -98,7 +108,17 @@ inline const std::vector<ws>& ecuManufacturerCatalogue() {
     L"Volvo Penta",L"Yanmar",L"Kubota",L"Komatsu",L"Perkins",L"Deutz",L"Liebherr",L"MTU",L"Navistar",
     L"Eberspacher",L"Webasto",L"ECUMaster",L"FuelTech",L"AEM Electronics",L"Hondata",L"Nistune",L"Vi-PEC",
     L"KMS",L"DTAFast",L"Emerald",L"Omex",L"PerfectTuning",L"Alientech",L"EVC Electronic",
-    L"Magic Motorsport",L"CMD Flash",L"Continental Powertrain",L"Continental SIMOS",L"Bosch Motorsport"
+    L"Magic Motorsport",L"CMD Flash",L"Continental Powertrain",L"Continental SIMOS",L"Bosch Motorsport",
+    L"Hella",L"Mando",L"Autoliv",L"Kostal",L"Mahle",L"Harman",L"Sirius",L"UAES",
+    L"Shanghai United Automotive Electronics",L"Weifu",L"Rheinmetall",L"Porsche Engineering",
+    L"Jabil",L"BHTC",L"Ficosa",L"Kongsberg Automotive",L"Johnson Controls",L"Nippon Seiki",
+    L"Shindengen",L"JTEKT",L"Astemo",L"Hitachi Automotive",L"Bosch Engineering",L"Delco Electronics",
+    L"GM Delphi",L"Valeo Siemens eAutomotive",L"Continental Automotive",L"ZF Friedrichshafen",
+    L"Mitsubishi Motors",L"Panasonic",L"Fujitsu",L"Magna",L"Magna Powertrain",L"TRW Automotive",
+    L"Knorr-Bremse",L"Eberspächer",L"Eberspacher",L"Landirenzo",L"Landi Renzo",L"BRC Gas Equipment",
+    L"Prins",L"Tomasetto Achille",L"AC Stag",L"Vialle",L"Emer",L"Lovato",L"Bigas",L"OMVL",
+    L"Delphi Packard",L"Siemens Automotive",L"Motorola Automotive",L"Freescale Semiconductor",
+    L"Renesas Electronics",L"Infineon Technologies",L"NXP Semiconductors",L"STMicroelectronics"
   }; return v;
 }
 inline ws normalizeVehicleBrand(const ws& raw) {
@@ -113,12 +133,22 @@ inline ws normalizeVehicleBrand(const ws& raw) {
 }
 inline ws inferVehicleBrandFromText(const ws& raw) {
   ws n=L" "+catalogNorm(raw)+L" ";ws best;size_t bestLen=0;bool ambiguous=false;
-  for(const auto& b:vehicleBrandCatalogue()) {
-    ws needle=L" "+catalogNorm(b)+L" ";
-    if(n.find(needle)==ws::npos)continue;
-    if(needle.size()>bestLen){best=b;bestLen=needle.size();ambiguous=false;}
-    else if(needle.size()==bestLen&&b!=best)ambiguous=true;
-  }
+  auto consider=[&](const ws& alias,const ws& canonical) {
+    ws needle=L" "+catalogNorm(alias)+L" ";
+    if(n.find(needle)==ws::npos)return;
+    if(needle.size()>bestLen){best=canonical;bestLen=needle.size();ambiguous=false;}
+    else if(needle.size()==bestLen&&canonical!=best)ambiguous=true;
+  };
+  // Dump filenames commonly abbreviate makes; only complete tokens are considered.
+  static const std::vector<std::pair<ws,ws>> aliases={
+    {L"vw",L"Volkswagen"},{L"volkswagen ag",L"Volkswagen"},{L"alfa",L"Alfa Romeo"},
+    {L"mercedes",L"Mercedes Benz"},{L"mercedes benz",L"Mercedes Benz"},
+    {L"mercedes-benz",L"Mercedes Benz"},{L"landrover",L"Land Rover"},
+    {L"land rover",L"Land Rover"},{L"bmw ag",L"BMW"},{L"gm",L"General Motors"},
+    {L"citroën",L"Citroen"},{L"ssang yong",L"SsangYong"},{L"tata motors",L"Tata"}
+  };
+  for(const auto& a:aliases)consider(a.first,a.second);
+  for(const auto& b:vehicleBrandCatalogue())consider(b,b);
   return best.empty()||ambiguous?ws(L"Unknown"):best;
 }
 inline ws identifyEcuManufacturer(const ws& raw) {
@@ -938,26 +968,61 @@ inline ws softwareStemFromSourceFilename(const ws& raw) {
 }
 inline ws scanEmbeddedHexFilename(const uint8_t* d,size_t n) {
   static const std::vector<ws> exts={L".bin",L".hex",L".rom",L".mot",L".s19",L".srec",L".ori",L".eep",L".epr",L".dat",L".frf",L".sgo",L".odx",L".vbf",L".flash"};
-  std::vector<std::pair<int,ws>> candidates;size_t p=0;
-  while(p<n) {
-    while(p<n&&(d[p]<0x20||d[p]>0x7e))++p;
-    size_t start=p;while(p<n&&d[p]>=0x20&&d[p]<=0x7e)++p;
-    if(p<=start||p-start>8192)continue;
-    ws run=decode(d+start,p-start);
+  std::vector<std::pair<int,ws>> candidates;
+  auto collectRun=[&](const ws& run) {
+    if(run.empty()||run.size()>8192)return;
     for(size_t i=0;i<run.size();++i) {
-      if(run[i]!=L'.')continue; // Candidate extensions can only start at a dot.
+      if(run[i]!=L'.')continue;
       for(const auto& ext:exts) {
-      if(i+ext.size()>run.size()||lower(run.substr(i,ext.size()))!=ext)continue;
-      size_t b=i;while(b>0&&((run[b-1]>=L'a'&&run[b-1]<=L'z')||(run[b-1]>=L'A'&&run[b-1]<=L'Z')||(run[b-1]>=L'0'&&run[b-1]<=L'9')||run[b-1]==L'_'||run[b-1]==L' '||run[b-1]==L'('||run[b-1]==L')'||run[b-1]==L'.'||run[b-1]==L'+'||run[b-1]==L'-'||run[b-1]==L'\\'||run[b-1]==L'/'))--b;
-      ws base=jsTrim(run.substr(b,i+ext.size()-b));size_t sep=base.find_last_of(L"\\/");if(sep!=ws::npos)base=base.substr(sep+1);
-      ws stem=softwareStemFromSourceFilename(base);if(stem.empty())continue;
-      int score=1+(stem.find_first_of(L"0123456789")!=ws::npos?2:0)+(stem.find_first_of(L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")!=ws::npos?1:0);
-      candidates.push_back({score,base});
+        if(i+ext.size()>run.size()||lower(run.substr(i,ext.size()))!=ext)continue;
+        size_t b=i;
+        auto allowed=[](wchar_t c) {
+          return (c>=L'a'&&c<=L'z')||(c>=L'A'&&c<=L'Z')||(c>=L'0'&&c<=L'9')||
+            c>=0x80||c==L'_'||c==L' '||c==L'('||c==L')'||c==L'.'||c==L'+'||
+            c==L'-'||c==L'\\'||c==L'/';
+        };
+        while(b>0&&allowed(run[b-1]))--b;
+        ws base=jsTrim(run.substr(b,i+ext.size()-b));
+        size_t sep=base.find_last_of(L"\\/");
+        if(sep!=ws::npos)base=base.substr(sep+1);
+        ws stem=softwareStemFromSourceFilename(base);
+        if(stem.empty())continue;
+        int score=1+(stem.find_first_of(L"0123456789")!=ws::npos?2:0)+
+          (stem.find_first_of(L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")!=ws::npos?1:0);
+        ws prefix=lower(run.substr(0,b));
+        if(prefix.find(L"source file")!=ws::npos||prefix.find(L"original file")!=ws::npos)score+=4;
+        if(run.substr(b,i+ext.size()-b).find_first_of(L"\\/")!=ws::npos)score+=1;
+        candidates.push_back({score,base});
       }
     }
+  };
+  // ANSI/Windows-1252 strings (the normal WinOLS metadata encoding).
+  size_t p=0;
+  while(p<n) {
+    while(p<n&&(d[p]<0x20||d[p]==0x7f))++p;
+    size_t begin=p;
+    while(p<n&&d[p]>=0x20&&d[p]!=0x7f)++p;
+    if(p>begin&&p-begin<=8192)collectRun(decode(d+begin,p-begin));
   }
-  std::sort(candidates.begin(),candidates.end(),[](const auto&a,const auto&b){return a.first!=b.first?a.first>b.first:a.second.size()<b.second.size();});
+  // UTF-16LE ASCII/Latin-1 runs can occur in imported metadata and embedded paths.
+  p=0;
+  while(p+1<n) {
+    while(p+1<n&&!(d[p]>=0x20&&d[p]!=0x7f&&d[p+1]==0))++p;
+    size_t begin=p;ws run;
+    while(p+1<n&&d[p]>=0x20&&d[p]!=0x7f&&d[p+1]==0) {
+      run+=cp1252(d[p]);p+=2;
+      if(run.size()>8192)break;
+    }
+    if(!run.empty())collectRun(run);
+    if(p==begin)++p;
+  }
+  std::sort(candidates.begin(),candidates.end(),[](const auto&a,const auto&b){
+    return a.first!=b.first?a.first>b.first:a.second.size()<b.second.size();
+  });
   return candidates.empty()?ws():candidates.front().second;
+}
+inline ws selectSourceFilename(const ws& original,const ws& scanned) {
+  return !softwareStemFromSourceFilename(original).empty()?original:scanned;
 }
 inline ws inferEcuFamily(const uint8_t* d,size_t n) {
   ws text=decode(d,n);
@@ -992,8 +1057,10 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
     if(!kv.first.empty()&&kv.first[0]!='_')a.metadata.push_back({fromAscii(kv.first.c_str()),kv.second});
   }
   ws original=get("original_file_name");
+  ws scannedSource=softwareStemFromSourceFilename(original).empty()?scanEmbeddedHexFilename(d,n):ws();
+  ws embedded=selectSourceFilename(original,scannedSource);
   ws rawBrand=firstFilled({get("make")});
-  ws inferredBrand=rawBrand.empty()?inferVehicleBrandFromText(original):ws(L"Unknown");
+  ws inferredBrand=rawBrand.empty()?inferVehicleBrandFromText(embedded):ws(L"Unknown");
   ws brand=!rawBrand.empty()?normalizeVehicleBrand(rawBrand):(!inferredBrand.empty()&&inferredBrand!=L"Unknown"?inferredBrand:ws(L"Unknown"));
   ws model=firstFilled({get("model"),get("type"),get("engine_code")});if(model.empty())model=L"Unknown";
   ws explicitEcu=firstFilled({get("ecu_name")});ws inferredEcu=explicitEcu.empty()?inferEcuFamily(d,n):ws();
@@ -1001,7 +1068,7 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   ws rawMaker=get("manufacturer");ws ecuManufacturer=identifyEcuManufacturer(rawMaker);
   bool knownMaker=false;for(const auto& m:ecuManufacturerCatalogue())if(catalogNorm(m)==catalogNorm(ecuManufacturer))knownMaker=true;
   if(!knownMaker) {
-    ws fromFilename=inferEcuManufacturerFromText(original);
+    ws fromFilename=inferEcuManufacturerFromText(embedded);
     if(fromFilename!=L"Unknown")ecuManufacturer=fromFilename;
     else {
       ws fromFamily=inferEcuManufacturerFromFamily(ecu);
@@ -1010,7 +1077,6 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
     if(ecuManufacturer.empty())ecuManufacturer=L"Unknown";
   }
   // Prefer the dedicated original-source filename field; scan binary strings only as fallback.
-  ws embedded=softwareStemFromSourceFilename(original).empty()?scanEmbeddedHexFilename(d,n):original;
   ws embeddedStem=softwareStemFromSourceFilename(embedded);
   ws metadataSoftware=firstFilled({get("sw_number")});ws lowSw=lower(metadataSoftware);
   bool generic=metadataSoftware.empty()||lowSw==L"unknown"||lowSw==L"n/a"||lowSw==L"none"||lowSw==L"not available"||lowSw==L"not identified"||lowSw==L"original"||lowSw==L"stock"||lowSw==L"dump"||lowSw==L"hex"||lowSw==L"rom"||lowSw==L"software"||lowSw==L"sw"||lowSw==L"-"||lowSw==L"?"||lowSw==L"%"||lowSw==lower(ecu);
@@ -1019,7 +1085,7 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   ws software=useFallback?embeddedStem:metadataSoftware;
   Candidate ex=extractMaps(d,n,formatVersion,a.warnings);
   a.ok=true;a.formatVersion=formatVersion;a.brand=brand;a.model=model;a.ecu=ecu;a.software=software;
-  a.ecuManufacturer=ecuManufacturer;a.brandSource=!rawBrand.empty()?L"metadata":(inferredBrand!=L"Unknown"?L"inferred from original filename":L"unknown");
+  a.ecuManufacturer=ecuManufacturer;a.brandSource=!rawBrand.empty()?L"metadata":(inferredBrand!=L"Unknown"?L"inferred from source filename":L"unknown");
   a.hardwareNumber=get("hw_number");a.productionNumber=get("production_no");
   a.engineCode=get("engine_code");a.vehicleYear=get("year");a.originalFileName=original;a.embeddedHexFilename=embedded;
   a.softwareSource=software.empty()?L"unknown":(useFallback?L"embedded hex filename":L"metadata");

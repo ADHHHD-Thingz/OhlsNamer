@@ -1,8 +1,8 @@
 #include <winver.h>
 1 24 "app.manifest"
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,3,0,0
-PRODUCTVERSION 1,3,0,0
+FILEVERSION 1,3,1,0
+PRODUCTVERSION 1,3,1,0
 FILEFLAGSMASK 0x3fL
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
@@ -12,11 +12,11 @@ BEGIN
     BLOCK "040904B0"
     BEGIN
       VALUE "FileDescription", "OLS Renamer - names WinOLS projects from their header"
-      VALUE "FileVersion", "1.3.0.0"
+      VALUE "FileVersion", "1.3.1.0"
       VALUE "InternalName", "OlsRenamer"
       VALUE "OriginalFilename", "OLS Renamer.exe"
       VALUE "ProductName", "OLS Renamer"
-      VALUE "ProductVersion", "1.3.0.0"
+      VALUE "ProductVersion", "1.3.1.0"
     END
   END
   BLOCK "VarFileInfo"

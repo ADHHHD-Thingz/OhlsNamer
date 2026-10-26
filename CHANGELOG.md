@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1
+
+- Fixed source-filename inference ordering: when the dedicated original-file field is absent or unusable, the scanned embedded HEX/BIN filename now informs vehicle-brand and ECU-manufacturer inference as well as software fallback.
+- Added UTF-16LE printable-run support to embedded HEX/BIN filename scanning while retaining Windows-1252/ANSI scanning.
+- Expanded vehicle makes across passenger, commercial, motorcycle and off-highway categories, and expanded ECU/module supplier aliases.
+- Added regression coverage for VW/Mercedes-Benz filename aliases, source-file fallback selection, UTF-16LE scanning and additional ECU supplier names.
+- Inferred or incomplete identity remains review-only; no claim of a literally exhaustive universal catalogue is made.
+
 ## 1.3.0
 
 - Expanded vehicle-brand and ECU-manufacturer catalogues with common aliases.
