@@ -245,6 +245,16 @@ static LRESULT onNotify(LPNMHDR nh) {
         details += L"\n\nParsed header fields:";
         for (const auto& field : a.metadata) details += L"\n" + field.first + L": " + field.second;
       }
+      if (!a.mapDetails.empty()) {
+        details += L"\n\nMap records (first 40):";
+        const size_t shown=std::min<size_t>(40,a.mapDetails.size());
+        for(size_t i=0;i<shown;++i) {
+          const auto& m=a.mapDetails[i];
+          details += L"\n[" + ws(m.defined ? L"defined" : L"skipped") + L"] " + (m.name.empty() ? ws(L"(unnamed)") : m.name);
+          if(!m.description.empty())details += L" — " + m.description;
+        }
+        if(a.mapDetails.size()>shown)details += L"\n... and " + std::to_wstring(a.mapDetails.size()-shown) + L" more map records";
+      }
       if (!a.warnings.empty()) {
         details += L"\n\nWarnings:";
         for (const auto& w : a.warnings) details += L"\n- " + w;
