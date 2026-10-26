@@ -41,6 +41,8 @@ int main() {
       L"Alfa Romeo", L"Giulietta", L"ME7.9.10").empty());
   assert(proposedFilename(L"VW", L"VW", L"EDC17C46", L"EDC17C46", 1) ==
       L"VW EDC17C46 (1).ols");
+  assert(proposedFilename(L"Alfa Romeo", L"Alfa Romeo Giulietta", L"ME7.9.10", L"Giulietta", 1) ==
+      L"Alfa Romeo Giulietta ME7.9.10 (1).ols");
   assert(proposedFilename(L"BMW", L"320d", L"EDC17C46", L"03G906016", 42) ==
       L"BMW 320d EDC17C46 03G906016 (42).ols");
   const ws sourceFallback=L"ori_VW_Golf_Bosch_EDC17C46_123456.bin";
