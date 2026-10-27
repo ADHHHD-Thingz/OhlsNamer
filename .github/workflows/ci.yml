@@ -50,6 +50,26 @@ jobs:
           rc=$?
           set -e
           test "$rc" -eq 2
+      - name: Audit map labels with independent reference parser
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(olstest/*.ols)
+          : > olstest-reference-map-audit.txt
+          for f in "${files[@]}"; do
+            echo "$f" >> olstest-reference-map-audit.txt
+            ./ols_dump "$f" >> olstest-reference-map-audit.txt 2>&1 || echo "REFERENCE_PARSE_FAILED $f" >> olstest-reference-map-audit.txt
+          done
+          test "$(grep -c '^── MAPS (' olstest-reference-map-audit.txt)" -gt 0
+          echo "=== Independent parser map counts ==="
+          awk '/^olstest\// { file=$0; next } /^── MAPS \(/ { print file " " $0 }' olstest-reference-map-audit.txt
+      - name: Upload independent reference map audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ols-reference-map-audit-${{ github.sha }}
+          path: olstest-reference-map-audit.txt
+          if-no-files-found: warn
       - name: Install MinGW cross-compiler
         run: sudo apt-get install -y g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libz-mingw-w64-dev
       - name: Cross-compile Win32 GUI release executable
