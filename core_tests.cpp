@@ -56,6 +56,11 @@ int main() {
   assert(scanEmbeddedHexFilename(utf16Bytes.data(),utf16Bytes.size())==L"ori_VW_Golf_Bosch_EDC17C46_123456.bin");
   assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
   assert(!isDefinedMap(L"Bosch 16 bit. 8 x 10", L""));
+  assert(!isDefinedMap(L"Bosch 16 bit. 16 x 16", L""));
+  assert(!isDefinedMap(L"16 bit. 16 x 16", L""));
+  assert(isDefinedMap(L"LDRXN 16 bit. 16 x 16", L""));
+  assert(isDefinedMap(L"Bosch torque limiter 16 bit. 16 x 16", L""));
+  assert(isDefinedMap(L"Torque limiter 16 bit 16x16", L""));
   assert(!isDefinedMap(L"Bosch map", L""));
   assert(!isDefinedMap(L"Denso Map", L""));
   assert(!isDefinedMap(L"Siemens map 2", L""));
