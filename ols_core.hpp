@@ -585,6 +585,14 @@ inline bool isUnknownNamePart(const ws& raw) {
   return value.empty() || value == L"unknown" || value == L"-" || value == L"?" || value == L"%";
 }
 
+// Standard OBD-II diagnostic trouble codes (P0420, C0035, B1234, U0100, and
+// optional manufacturer suffix). These are never software/calibration IDs.
+inline bool isDtcCode(const ws& raw) {
+  static const std::wregex re(L"^[PCBU]-?[0-9]{4}[0-9A-F]{0,2}$",
+                              std::regex::ECMAScript | std::regex::icase);
+  return std::regex_match(jsTrim(raw), re);
+}
+
 inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, const ws& software,
                            int definedMaps) {
   ws prefix;
@@ -592,6 +600,8 @@ inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, cons
   std::vector<ws> priorParts;
   auto appendPart = [&](const ws& raw) {
     if (isUnknownNamePart(raw)) return;
+    // Diagnostic trouble codes are never useful filename identity.
+    if (isDtcCode(raw)) return;
     ws part = jsTrim(raw);
     // Remove an already-emitted slot when it is embedded as a whole phrase in a
     // longer later slot (e.g. make="Alfa Romeo", model="Alfa Romeo Giulietta").
@@ -1420,7 +1430,8 @@ inline ws softwareStemFromSourceFilename(const ws& raw) {
 // standalone, version-like identifier from the basename; descriptive folder/vendor
 // names (e.g. "TuneCenter") and vehicle/engine marketing text are not SW numbers.
 inline ws softwareVersionFromSourceFilename(const ws& raw, const ws& brand = L"",
-                                            const ws& model = L"", const ws& ecu = L"") {
+                                            const ws& model = L"", const ws& ecu = L"",
+                                            const ws& production = L"", const ws& hardware = L"") {
   ws stem = softwareStemFromSourceFilename(raw);
   if (stem.empty()) return L"";
   auto identity = [&](const ws& token) {
@@ -1437,7 +1448,8 @@ inline ws softwareVersionFromSourceFilename(const ws& raw, const ws& brand = L""
     L"tunecenter",L"tune center",L"tuningcenter",L"tuning center",L"tuningfiles",
     L"files",L"file",L"customer",L"client",L"modified",L"mod",L"backup",
     L"final",L"new",L"old",L"test",L"unknown",L"software",L"sw",L"rom",L"flash",
-    L"bosch",L"denso",L"siemens",L"continental",L"delphi",L"marelli",L"magneti"
+    L"bosch",L"denso",L"siemens",L"continental",L"delphi",L"marelli",L"magneti",
+    L"catalyst",L"system",L"disable",L"pcm",L"dtc",L"dtcs"
   };
   std::vector<ws> tokens;
   ws token;
@@ -1448,15 +1460,19 @@ inline ws softwareVersionFromSourceFilename(const ws& raw, const ws& brand = L""
     else flush();
   }
   flush();
+  ws prodDigits, hwDigits;
+  for (wchar_t c : production) if (c >= L'0' && c <= L'9') prodDigits += c;
+  for (wchar_t c : hardware) if (c >= L'0' && c <= L'9') hwDigits += c;
   ws best;
   int bestScore = -1;
   for (size_t i = 0; i < tokens.size(); ++i) {
     const ws& t = tokens[i];
     ws low = lower(t);
-    if (t.size() < 5 || t.size() > 16 || junk.count(low) || identity(t)) continue;
+    if (t.size() < 5 || t.size() > 16 || junk.count(low) || identity(t) || isDtcCode(t)) continue;
     bool hasDigit = false, hasAlpha = false;
+    ws digits;
     for (wchar_t c : t) {
-      if (c >= L'0' && c <= L'9') hasDigit = true;
+      if (c >= L'0' && c <= L'9') { hasDigit = true; digits += c; }
       if ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z')) hasAlpha = true;
     }
     if (!hasDigit) continue;
@@ -1468,6 +1484,11 @@ inline ws softwareVersionFromSourceFilename(const ws& raw, const ws& brand = L""
     int score = (hasAlpha ? 40 : 30) + static_cast<int>(t.size());
     // Prefer later tokens: source filenames usually place the SW/calibration ID at the end.
     score += static_cast<int>(i);
+    // Prefer a token whose digits appear in the production or hardware number.
+    if (digits.size() >= 4 &&
+        ((!prodDigits.empty() && prodDigits.find(digits) != ws::npos) ||
+         (!hwDigits.empty() && hwDigits.find(digits) != ws::npos)))
+      score += 20;
     if (score > bestScore) { best = t; bestScore = score; }
   }
   return best;
@@ -1629,11 +1650,11 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   }
   // Prefer the dedicated original-source filename field; scan binary strings only as fallback.
   ws metadataSoftware=firstFilled({get("sw_number")});ws lowSw=lower(metadataSoftware);
-  bool generic=metadataSoftware.empty()||lowSw==L"unknown"||lowSw==L"n/a"||lowSw==L"none"||lowSw==L"not available"||lowSw==L"not identified"||lowSw==L"original"||lowSw==L"stock"||lowSw==L"dump"||lowSw==L"hex"||lowSw==L"rom"||lowSw==L"software"||lowSw==L"sw"||lowSw==L"-"||lowSw==L"?"||lowSw==L"%"||lowSw==lower(ecu);
+  bool generic=metadataSoftware.empty()||lowSw==L"unknown"||lowSw==L"n/a"||lowSw==L"none"||lowSw==L"not available"||lowSw==L"not identified"||lowSw==L"original"||lowSw==L"stock"||lowSw==L"dump"||lowSw==L"hex"||lowSw==L"rom"||lowSw==L"software"||lowSw==L"sw"||lowSw==L"-"||lowSw==L"?"||lowSw==L"%"||lowSw==lower(ecu)||isDtcCode(metadataSoftware);
   static const std::wregex boschPartNumberRe(
       L"(0261S[0-9]{5}|0281[0-9]{6})", std::regex::ECMAScript | std::regex::icase);
   bool boschPart=std::regex_match(metadataSoftware,boschPartNumberRe)&&lower(ecuManufacturer).find(L"bosch")!=ws::npos;
-  ws embeddedSoftware=softwareVersionFromSourceFilename(embedded,brand,model,ecu);
+  ws embeddedSoftware=softwareVersionFromSourceFilename(embedded,brand,model,ecu,get("production_no"),get("hw_number"));
   bool useFallback=!embeddedSoftware.empty()&&(generic||boschPart);
   ws software=useFallback?embeddedSoftware:metadataSoftware;
   VersionDirectory versionDirectory;

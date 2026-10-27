@@ -47,6 +47,19 @@ int main() {
       L"ori_VW_Golf_Bosch_EDC17C46_123456.bin", L"Volkswagen", L"Golf", L"Bosch EDC17C46") == L"123456");
   assert(softwareVersionFromSourceFilename(L"ori_Alfa_Romeo_Giulietta.bin",
       L"Alfa Romeo", L"Giulietta", L"ME7.9.10").empty());
+  assert(isDtcCode(L"P0420"));
+  assert(isDtcCode(L"p0420"));
+  assert(isDtcCode(L"C0035"));
+  assert(isDtcCode(L"U0100"));
+  assert(!isDtcCode(L"SW37805"));
+  assert(!isDtcCode(L"0281010112"));
+  assert(softwareVersionFromSourceFilename(
+      L"HONDA FD 2.0 SW37805 RRF Q120 M1 SH7058 1MB WNW3361 MOD DISABLE PCM P0420 CATALYST SYSTEM.bin",
+      L"Honda", L"Civic", L"SH7058", L"37805-RRF-Q120") == L"SW37805");
+  assert(softwareVersionFromSourceFilename(
+      L"ori_VW_Golf_P0420.bin", L"Volkswagen", L"Golf", L"EDC15").empty());
+  assert(proposedFilename(L"Honda", L"Civic", L"SH7058", L"P0420", 76) ==
+      L"Honda Civic SH7058 (76).ols");
   assert(proposedFilename(L"VW", L"VW", L"EDC17C46", L"EDC17C46", 1) ==
       L"VW EDC17C46 (1).ols");
   assert(proposedFilename(L"Alfa Romeo", L"Alfa Romeo Giulietta", L"ME7.9.10", L"Giulietta", 1) ==

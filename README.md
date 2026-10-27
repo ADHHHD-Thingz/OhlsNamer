@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.3.17
+# OhlsNamer (OLS Renamer) — v1.3.18
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
@@ -33,6 +33,11 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 The analyzer uses a bounded pool of up to four workers and performs a fast candidate-byte search for map-directory markers. It also reuses the validated version directory and caches a per-process software-number regular expression. These changes reduce repeated work without weakening marker validation.
 
 For collections of 4,000+ projects, actual throughput still depends on OLS file sizes, disk type, compression, and the number of projects requiring full-file fallback scans. No fixed files-per-second claim is made without a representative benchmark. Peak memory should be measured before increasing worker count; each worker holds a project buffer and may allocate temporary parsing/decompression buffers.
+
+## Version 1.3.18
+
+- Keeps diagnostic trouble codes such as `P0420` out of proposed filenames.
+- Prefers a source-filename software token that matches the production or hardware number.
 
 ## Version 1.3.17
 

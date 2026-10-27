@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.18
+
+- Keep diagnostic trouble codes out of proposed filenames. Standard OBD codes such as `P0420`, `C0035` and `U0100` are rejected as software-version candidates and omitted from every filename slot.
+- Prefer a source-filename token whose digits appear in the production or hardware number when choosing a software fallback, so a related software ID (for example `SW37805` next to production `37805-RRF-Q120`) wins over an unrelated later token.
+- Add regression coverage for DTC rejection and production-linked software selection.
+
 ## 1.3.17
 
 - Stop treating manufacturer names (Denso, Keihin, Temic, Kefico, Transtron) as ECU-family prefixes and require a digit immediately after the family prefix. This prevents garbage ECU slots such as `DENSO2005`, `Denso89663-26432` and `Me-b1G`.
