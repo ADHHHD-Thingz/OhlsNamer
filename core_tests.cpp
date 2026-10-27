@@ -168,6 +168,27 @@ int main() {
   assert(boundedMarkers.size() == 1);
   assert(boundedMarkers[0].at == 89);
 
+  // A valid map marker after more than eight plausible decoys must still be
+  // considered; otherwise map counts can silently fall back to an earlier decoy.
+  Bytes manyMarkers(512, 0);
+  auto putMarker = [&](size_t off) {
+    manyMarkers[off] = 0x77; manyMarkers[off + 1] = 0x33;
+    manyMarkers[off + 2] = 0x88; manyMarkers[off + 3] = 0x11;
+    manyMarkers[off + 4] = 0;
+    manyMarkers[off + 5] = 1;
+  };
+  for (size_t i = 0; i < 10; ++i) putMarker(64 + i * 16);
+  putMarker(300);
+  const auto allMarkers = findMarkers(manyMarkers.data(), manyMarkers.size(), manyMarkers.size());
+  assert(allMarkers.size() == 11);
+  assert(allMarkers.back().at == 309);
+
+  Candidate completeMapDirectory;
+  Candidate partialMapDirectory;
+  partialMapDirectory.warning = L"Read 8 of 10 map records before the directory ended.";
+  assert(!hasPartialMapDirectory(completeMapDirectory));
+  assert(hasPartialMapDirectory(partialMapDirectory));
+
   // Invalid version-array dimensions must not be dispatched as a valid array.
   Bytes invalidVersioned = versioned;
   invalidVersioned[52] = 0xff;
