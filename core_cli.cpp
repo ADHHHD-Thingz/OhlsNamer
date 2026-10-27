@@ -21,5 +21,20 @@ int main(int argc, char** argv) {
            a.versionDataStart, a.versionRecordSize, ols::utf8(a.proposed).c_str());
     if (getenv("WARN"))
       for (auto& w : a.warnings) printf("  warn=%s\n", ols::utf8(w).c_str());
+    // Opt-in corpus audit: expose labels excluded from the filename map count.
+    if (getenv("MAP_AUDIT")) {
+      printf("  map-audit total=%zu defined=%d skipped=%d\n",
+             a.mapCount, a.definedCount, a.skippedCount);
+      size_t shown = 0;
+      for (const auto& m : a.mapDetails) {
+        if (m.defined || shown >= 10) continue;
+        std::string name = ols::utf8(m.name);
+        std::string description = ols::utf8(m.description);
+        if (name.size() > 100) name.resize(100);
+        if (description.size() > 100) description.resize(100);
+        printf("  map-skipped name=%s description=%s\n", name.c_str(), description.c_str());
+        ++shown;
+      }
+    }
   }
 }
