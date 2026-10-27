@@ -1063,6 +1063,10 @@ struct Marker {
   uint32_t count;
 };
 
+inline bool hasPartialMapDirectory(const Candidate& candidate) {
+  return !candidate.warning.empty();
+}
+
 inline std::vector<Marker> findMarkers(const uint8_t* d, size_t n, size_t scanLimit) {
   std::vector<Marker> out;
   const size_t boundedSize = std::min(n, scanLimit);
@@ -1082,7 +1086,9 @@ inline std::vector<Marker> findMarkers(const uint8_t* d, size_t n, size_t scanLi
     const uint32_t count = rd32(d, i + 5);
     if (compressed > 1 || count == 0 || count > 200000) continue;
     out.push_back({i + 9, compressed, count});
-    if (out.size() >= 8) break;
+    // A few marker-shaped false positives can precede the real directory in
+    // large headers. Keep searching beyond the old eight-candidate cutoff.
+    if (out.size() >= 64) break;
   }
   return out;
 }
@@ -1561,7 +1567,11 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   a.proposed=proposedFilename(brand,model,ecu,software,a.definedCount);
   const bool hasAnyIdentity = !isUnknownNamePart(brand) || !isUnknownNamePart(model) || !isUnknownNamePart(ecu) || !isUnknownNamePart(software);
    const bool scannedMapEvidence = ex.source=="scanned map directory" && (a.mapCount>=10 || a.definedCount>0);
-  a.renameSafe=a.headerComplete&&a.formatSizeConsistent&&a.versionDirectoryValid&&hasAnyIdentity&&(ex.source=="map directory"||ex.source=="compressed map directory"||scannedMapEvidence);
+  // A partially read explicit map directory gives an undercount. Keep it
+  // review-only even when enough labels were recovered to look plausible.
+  a.renameSafe=a.headerComplete&&a.formatSizeConsistent&&a.versionDirectoryValid&&
+      hasAnyIdentity&&!hasPartialMapDirectory(ex)&&
+      (ex.source=="map directory"||ex.source=="compressed map directory"||scannedMapEvidence);
   if(!a.renameSafe)a.warnings.push_back(L"Identity or structured map-directory evidence is incomplete; automatic rename is disabled.");
   return a;
 }
