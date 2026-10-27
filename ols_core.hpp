@@ -323,7 +323,7 @@ inline bool isPlaceholderLabel(const ws& raw) {
           cleaned += c;
       if (cleaned.empty()) { token.clear(); return; }
       static const std::set<ws> technical = {
-          L"bit", L"bits", L"lohi", L"hilo", L"big", L"little", L"bigendian", L"littleendian",
+          L"bit", L"bits", L"lohi", L"hilo", L"big", L"little", L"endian", L"bigendian", L"littleendian",
           L"signed", L"unsigned", L"be", L"le", L"msb", L"lsb", L"x"};
       bool numeric = std::all_of(cleaned.begin(), cleaned.end(), [](wchar_t c) {
         return (c >= L'0' && c <= L'9') || c == 0x00d7;
