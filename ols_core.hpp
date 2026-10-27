@@ -1175,8 +1175,9 @@ inline Candidate scanMapDirectory(const uint8_t* d, size_t n, uint32_t version) 
         (best.maps.size() >= 3 && std::any_of(best.maps.begin(), best.maps.end(),
           [](const MapRow& row) { return row.defined; }))) return best;
   }
-  if (best.maps.size() >= 2 ||
-      (best.maps.size() == 1 && best.maps.front().defined)) return best;
+  if (best.maps.size() >= 3 ||
+      std::any_of(best.maps.begin(), best.maps.end(),
+        [](const MapRow& row) { return row.defined; })) return best;
   Candidate none;
   none.source = "unread";
   return none;
