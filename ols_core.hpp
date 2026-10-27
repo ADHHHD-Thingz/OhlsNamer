@@ -288,11 +288,6 @@ inline bool isPlaceholderLabel(const ws& raw) {
   static const R DIM(L"\\d+\\s*[xX×*]\\s*\\d+", fl);
   static const R ORDER(L"\\b(lohi|hilo|big[\\s-]?endian|little[\\s-]?endian)\\b", fl);
   static const R BITORDER(L"^\\d+\\s*-?\\s*bits?\\b[\\s,.-]*(lohi|hilo)\\b", fl);
-  // These expressions are used in the per-map hot path; cache them for large
-  // database scans rather than recompiling them for every technical label.
-  static const R MAPWORD(L"\\bmap\\b", fl);
-  static const R DIGITS(L"[0-9]+", fl);
-
   ws s = spaceNorm(jsTrim(removeNul(raw)));  // trim happens before normalising in JS; same result
   if (s.empty()) return true;
   if (s == L"-" || s == L"?" || s == L"%") return true;
@@ -331,24 +326,27 @@ inline bool isPlaceholderLabel(const ws& raw) {
         supplierMatch.position() == 0) {
       residue = residue.substr((size_t)supplierMatch.length());
     }
-    residue = std::regex_replace(residue, BIT, L" ");
-    residue = std::regex_replace(residue, DIM, L" ");
-    residue = std::regex_replace(residue, ORDER, L" ");
-    residue = std::regex_replace(residue, MAPWORD, L" ");
-    residue = std::regex_replace(residue, DIGITS, L" ");
-    ws lettersOnly;
+    // Tokenize cheaply instead of running several regex replacements per map.
+    // This path can execute millions of times in large calibration databases.
+    static const std::set<ws> TECHNICAL_TOKENS = {
+        L"bit", L"bits", L"map", L"maps", L"x", L"lohi", L"hilo",
+        L"big", L"little", L"endian", L"be", L"le", L"msb", L"lsb",
+        L"signed", L"unsigned"
+    };
+    bool meaningful = false;
+    ws token;
+    auto consumeToken = [&]() {
+      if (!token.empty() && !TECHNICAL_TOKENS.count(token)) meaningful = true;
+      token.clear();
+    };
     for (wchar_t c : residue) {
       const bool asciiLetter = c >= L'a' && c <= L'z';
       const bool latinLetter = c >= 0x00c0 && c <= 0x00ff && c != 0x00d7 && c != 0x00f7;
-      lettersOnly += (asciiLetter || latinLetter) ? c : L' ';
+      if (asciiLetter || latinLetter) token += c;
+      else consumeToken();
     }
-    ws meaningful;
-    bool spaced = true;
-    for (wchar_t c : lettersOnly) {
-      if (c == L' ') { if (!spaced) meaningful += c; spaced = true; }
-      else { meaningful += c; spaced = false; }
-    }
-    meaningful = jsTrim(meaningful);
+    consumeToken();
+    if (!meaningful) return true;
     if (meaningful.empty()) return true;
   }
   if (std::regex_search(s, BITORDER) && s.size() < 48) return true;
