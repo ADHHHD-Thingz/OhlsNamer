@@ -83,7 +83,7 @@ int main() {
            ws(L"Bosch map 2: 16 bit / 16x16"),
            ws(L"Denso Map #3 - 16-bit 8x8"),
            ws(L"Siemens map (4) 32 bit little endian"),
-           ws(L"Bosch map 0x10")}) {
+           ws(L"Bosch map 0x10"), ws(L"Bosch Kennfeld 2 (16x16)"), ws(L"Siemens Kennlinie 3 16 bit")}) {
     assert(!isDefinedMap(generated, L""));
   }
   // Genuine map names remain countable even when they mention a supplier.
