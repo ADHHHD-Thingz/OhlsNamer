@@ -105,6 +105,13 @@ int main() {
   assert(isDefinedMap(L"", L"P0420 DTC OFF ( Replace the dtc line with 0)"));
   assert(!isDefinedMap(L"", L"Hexdump"));
   assert(!isDefinedMap(L"", L"Map"));
+  for (const ws& statisticalLabel : {
+           ws(L"Statistich"), ws(L"Statistich 16"), ws(L"Statistical 16"),
+           ws(L"Map \"Statistich 16\""), ws(L"Kennfeld \"Statistische 16\""),
+           ws(L"Kennlinie statistich 8")}) {
+    assert(!isDefinedMap(L"", statisticalLabel));
+    assert(!isDefinedMap(statisticalLabel, L""));
+  }
   for (const ws& generatedDescription : {
            ws(L"Map \"Bosch II 16\""), ws(L"Map \"Bosch 16\""),
            ws(L"Map \"Statistical 16\" (!)"),
