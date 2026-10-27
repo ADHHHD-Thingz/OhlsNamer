@@ -278,7 +278,7 @@ inline bool isPlaceholderLabel(const ws& raw) {
   static const R PRODUCER_MAP(
       L"^(bosch|siemens|continental|delphi|denso|marelli|magneti(?:\\s+marelli)?|delco|visteon|temic|"
       L"keihin|hitachi|sagem|lucas|motorola|trionic|transtron|vdo|kefico|uaes|weifu|mitsubishi|"
-      L"panasonic|vale[oó]|aptiv|renesas|infineon|hella|aisin|zf)\\s+map\\b",
+      L"panasonic|vale[oó]|aptiv|renesas|infineon|hella|aisin|zf)\\s+(?:map|kennfeld|kennlinie)\\b",
       fl);
   static const R ONLYNUM(L"^\\d+$");
   static const R HEXID(L"^(?:0x[0-9a-f]{1,8}|(?=[0-9a-f]{8,16}$)(?=[0-9a-f]*[0-9])[0-9a-f]+)$", fl);
@@ -323,7 +323,7 @@ inline bool isPlaceholderLabel(const ws& raw) {
           cleaned += c;
       if (cleaned.empty()) { token.clear(); return; }
       static const std::set<ws> technical = {
-          L"bit", L"bits", L"lohi", L"hilo", L"bigendian", L"littleendian",
+          L"bit", L"bits", L"lohi", L"hilo", L"big", L"little", L"bigendian", L"littleendian",
           L"signed", L"unsigned", L"be", L"le", L"msb", L"lsb", L"x"};
       bool numeric = std::all_of(cleaned.begin(), cleaned.end(), [](wchar_t c) {
         return (c >= L'0' && c <= L'9') || c == 0x00d7;
