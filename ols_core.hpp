@@ -1079,9 +1079,8 @@ inline Candidate readMapBlock(const uint8_t* d, size_t n, size_t start, uint32_t
 }
 
 inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
+                             const VersionDirectory& versionDirectory, bool haveVersionDirectory,
                              std::vector<ws>& warnings) {
-  VersionDirectory versionDirectory;
-  const bool haveVersionDirectory = locateVersionDirectory(d, n, versionDirectory);
   // Never dispatch map parsing into the embedded ROM/version array. M1's
   // version_data_start marks the beginning of that array; maps precede it.
   const size_t mapLimit = haveVersionDirectory ? versionDirectory.dataStart : n;
@@ -1355,7 +1354,7 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   } else {
     a.warnings.push_back(L"Could not validate the embedded ROM version directory (M1).");
   }
-  Candidate ex=extractMaps(d,n,formatVersion,a.warnings);
+  Candidate ex=extractMaps(d,n,formatVersion,versionDirectory,a.versionDirectoryValid,a.warnings);
   a.ok=true;a.formatVersion=formatVersion;a.brand=brand;a.model=model;a.ecu=ecu;a.software=software;
   a.ecuManufacturer=ecuManufacturer;a.brandSource=!rawBrand.empty()?L"metadata":(inferredBrand!=L"Unknown"?L"inferred from source filename":L"unknown");
   a.hardwareNumber=get("hw_number");a.productionNumber=get("production_no");
