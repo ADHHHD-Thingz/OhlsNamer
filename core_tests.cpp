@@ -67,6 +67,10 @@ int main() {
   assert(!isDefinedMap(L"0000002b", L""));
   assert(!isDefinedMap(L"0000371f", L""));
   assert(!isDefinedMap(L"0x10", L""));
+  assert(!isDefinedMap(L"010021a8 / 000021a8", L""));
+  assert(!isDefinedMap(L"A0", L""));
+  assert(!isDefinedMap(L"A1", L""));
+  assert(!isDefinedMap(L"A2", L""));
   assert(isDefinedMap(L"ABICLOSV", L""));
   assert(isDefinedMap(L"AADPD_ON", L""));
   assert(!isDefinedMap(L"Denso Map", L""));
