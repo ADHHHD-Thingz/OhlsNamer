@@ -1138,6 +1138,30 @@ inline bool hasMapText(const ws& value) {
 inline bool plausibleMapPrefix(const uint8_t* d, size_t n, size_t start, uint32_t version) {
   if (!d || start >= n || n - start < 16) return false;
   try {
+    // Fast path for the common pre-330 layouts: validate the serialized string
+    // lengths and printable bytes directly, without allocating Seq/string objects
+    // for every byte scanned in the 64 KiB search window.
+    if (version < 330) {
+      size_t p = start;
+      if (version >= 268) p += 1;
+      if (version >= 282) p += 4;
+      if (version >= 287) {
+        CStr prefix = readCString(d, n, p, version, 200);
+        if (!prefix.valid || prefix.text.size() > 200) return false;
+        p = prefix.end;
+      }
+      if (version >= 93) p += 1;
+      CStr description = readCString(d, n, p, version, 200);
+      if (!description.valid || description.text.size() > 200) return false;
+      if (hasMapText(description.text)) return true;
+      if (version >= 80) {
+        // After description: five u32 fields, then folder id and the map name.
+        CStr name = readCString(d, n, description.end + 24, version, 200);
+        return name.valid && hasMapText(name.text);
+      }
+      return false;
+    }
+
     Seq probe(d, n, version, start);
     if (version >= 268) probe.b();
     if (version >= 282) probe.u32();
@@ -1146,8 +1170,6 @@ inline bool plausibleMapPrefix(const uint8_t* d, size_t n, size_t start, uint32_
     ws description = probe.ml();
     if (description.size() > 200) return false;
     if (hasMapText(description)) return true;
-    // Empty descriptions are possible when the separately named-map field is
-    // present. Validate that field cheaply before attempting a full map parse.
     if (version >= 80) {
       for (int i = 0; i < 5; ++i) probe.u32();
       probe.u32();  // folder id
@@ -1159,7 +1181,6 @@ inline bool plausibleMapPrefix(const uint8_t* d, size_t n, size_t start, uint32_
     return false;
   }
 }
-
 inline bool readMapRecordAt(const uint8_t* d, size_t n, size_t start, uint32_t version,
                             MapRow& row, size_t& end) {
   if (!plausibleMapPrefix(d, n, start, version)) return false;
