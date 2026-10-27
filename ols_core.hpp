@@ -1123,17 +1123,48 @@ inline Candidate readMapBlock(const uint8_t* d, size_t n, size_t start, uint32_t
   Seq seq(d, n, version, start);
   Candidate c;
   c.source = "map directory";
-  size_t plausible = 0;
   for (uint32_t i = 0; i < count; i++) {
     MapRow r;
-    seq.map(r.name, r.description);
+    try {
+      // Structural parsing determines record validity; label quality is separate.
+      seq.map(r.name, r.description);
+    } catch (const std::exception&) {
+      if (c.maps.empty()) throw;
+      c.warning = L"Read " + std::to_wstring(c.maps.size()) + L" of " +
+                  std::to_wstring(count) +
+                  L" map records before a record became structurally unreadable.";
+      break;
+    }
     r.defined = isDefinedMap(r.name, r.description);
-    if (looksLikeRealMap(r.name, r.description)) plausible++;
     c.maps.push_back(std::move(r));
-    if (i == 29 && c.maps.size() >= 30 && (double)plausible / (double)c.maps.size() < 0.2)
-      throw Err("map directory does not look like named records");
   }
   return c;
+}
+
+inline size_t definedMapCount(const Candidate& candidate) {
+  return static_cast<size_t>(std::count_if(candidate.maps.begin(), candidate.maps.end(),
+      [](const MapRow& row) { return row.defined; }));
+}
+
+inline size_t plausibleMapCount(const Candidate& candidate) {
+  return static_cast<size_t>(std::count_if(candidate.maps.begin(), candidate.maps.end(),
+      [](const MapRow& row) { return looksLikeRealMap(row.name, row.description); }));
+}
+
+// Prefer complete directories, then record coverage, defined labels and label
+// evidence. No minimum human-name ratio is allowed to invalidate parsed records.
+inline bool betterMapCandidate(const Candidate& candidate, const Candidate& current) {
+  if (candidate.maps.empty()) return false;
+  if (current.maps.empty()) return true;
+  const bool candidateComplete = candidate.warning.empty();
+  const bool currentComplete = current.warning.empty();
+  if (candidateComplete != currentComplete) return candidateComplete;
+  if (candidate.maps.size() != current.maps.size())
+    return candidate.maps.size() > current.maps.size();
+  const size_t candidateDefined = definedMapCount(candidate);
+  const size_t currentDefined = definedMapCount(current);
+  if (candidateDefined != currentDefined) return candidateDefined > currentDefined;
+  return plausibleMapCount(candidate) > plausibleMapCount(current);
 }
 
 inline bool hasMapText(const ws& value) {
@@ -1156,17 +1187,17 @@ inline bool plausibleMapPrefix(const uint8_t* d, size_t n, size_t start, uint32_
       if (version >= 268) p += 1;
       if (version >= 282) p += 4;
       if (version >= 287) {
-        CStr prefix = readCString(d, n, p, version, 200);
-        if (!prefix.valid || prefix.text.size() > 200) return false;
+        CStr prefix = readCString(d, n, p, version, 4096);
+        if (!prefix.valid || prefix.text.size() > 4096) return false;
         p = prefix.end;
       }
       if (version >= 93) p += 1;
-      CStr description = readCString(d, n, p, version, 200);
-      if (!description.valid || description.text.size() > 200) return false;
+      CStr description = readCString(d, n, p, version, 4096);
+      if (!description.valid || description.text.size() > 4096) return false;
       if (hasMapText(description.text)) return true;
       if (version >= 80) {
         // After description: five u32 fields, then folder id and the map name.
-        CStr name = readCString(d, n, description.end + 24, version, 200);
+        CStr name = readCString(d, n, description.end + 24, version, 4096);
         return name.valid && hasMapText(name.text);
       }
       return false;
@@ -1178,13 +1209,13 @@ inline bool plausibleMapPrefix(const uint8_t* d, size_t n, size_t start, uint32_
     if (version >= 287) probe.ml();
     if (version >= 93) probe.u8();
     ws description = probe.ml();
-    if (description.size() > 200) return false;
+    if (description.size() > 4096) return false;
     if (hasMapText(description)) return true;
     if (version >= 80) {
       for (int i = 0; i < 5; ++i) probe.u32();
       probe.u32();  // folder id
       ws name = probe.str();
-      return name.size() <= 200 && hasMapText(name);
+      return name.size() <= 4096 && hasMapText(name);
     }
     return false;
   } catch (const std::exception&) {
@@ -1198,10 +1229,9 @@ inline bool readMapRecordAt(const uint8_t* d, size_t n, size_t start, uint32_t v
     Seq seq(d, n, version, start);
     seq.map(row.name, row.description);
     end = seq.pos;
-    if (end <= start + 16 || end > n || row.name.size() > 200 ||
-        row.description.size() > 200) return false;
-    if (!hasMapText(row.name) && !hasMapText(row.description)) return false;
-    if (!looksLikeRealMap(row.name, row.description)) return false;
+    if (end <= start + 16 || end > n || row.name.size() > 4096 ||
+        row.description.size() > 4096) return false;
+    // Do not apply human-name heuristics during structural record discovery.
     row.defined = isDefinedMap(row.name, row.description);
     return true;
   } catch (const std::exception&) {
@@ -1216,11 +1246,18 @@ inline Candidate scanMapDirectory(const uint8_t* d, size_t n, uint32_t version) 
   Candidate best;
   best.source = "unread";
   if (!d || n < 0x200) return best;
-  const size_t scanEnd = std::min<size_t>(n, 0x10000);
-  for (size_t start = 0x180; start + 16 < scanEnd; ++start) {
-    if (!plausibleMapPrefix(d, n, start, version)) continue;
+  // Map records may occur beyond 64 KiB. Scan the bounded serialized header,
+  // respecting mapLimit's M1 fence when available.
+  const size_t scanEnd = std::min<size_t>(n, 8u * 1024u * 1024u);
+  size_t start = 0x180;
+  while (start + 16 < scanEnd) {
+    if (!plausibleMapPrefix(d, n, start, version)) {
+      ++start;
+      continue;
+    }
     Candidate candidate;
     candidate.source = "scanned map directory";
+    candidate.warning = L"Recovered by sequential scan; directory count is heuristic.";
     size_t cursor = start;
     while (candidate.maps.size() < 200000 && cursor + 16 < n) {
       MapRow row;
@@ -1245,16 +1282,11 @@ inline Candidate scanMapDirectory(const uint8_t* d, size_t n, uint32_t version) 
       }
       if (!nextFound) break;
     }
-    if (candidate.maps.size() > best.maps.size()) best = std::move(candidate);
-    // A run of ten records, or three records including a human-named map,
-    // is strong evidence. Stop before scanning the same directory repeatedly.
-    if (best.maps.size() >= 10 ||
-        (best.maps.size() >= 3 && std::any_of(best.maps.begin(), best.maps.end(),
-          [](const MapRow& row) { return row.defined; }))) return best;
+    if (betterMapCandidate(candidate, best)) best = std::move(candidate);
+    // Skip over a successfully parsed run instead of reparsing each byte in it.
+    start = cursor > start ? cursor : start + 1;
   }
-  if (best.maps.size() >= 3 ||
-      std::any_of(best.maps.begin(), best.maps.end(),
-        [](const MapRow& row) { return row.defined; })) return best;
+  if (!best.maps.empty()) return best;
   Candidate none;
   none.source = "unread";
   return none;
@@ -1285,29 +1317,23 @@ inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
         bn = block.size();
       }
       Candidate cand = readMapBlock(bp, bn, marker.at, marker.count, version);
-      bool full = cand.maps.size() == marker.count;
-      size_t plausible = 0;
-      for (const auto& m : cand.maps)
-        if (looksLikeRealMap(m.name, m.description)) plausible++;
-      double ratio = cand.maps.empty() ? 0 : (double)plausible / (double)cand.maps.size();
-      if (full || ratio >= 0.45 || plausible >= 8) {
-        if (marker.compressed) cand.source = "compressed map directory";
-        if (!full)
-          cand.warning = L"Read " + std::to_wstring(cand.maps.size()) + L" of " +
-                         std::to_wstring(marker.count) +
-                         L" map records before the directory ended.";
-        if (!haveBest || cand.maps.size() > best.maps.size()) {
-          best = cand;
-          haveBest = true;
-        }
-        if (full && ratio >= 0.45) return cand;
+      const bool full = cand.maps.size() == marker.count && cand.warning.empty();
+      if (!full && cand.warning.empty())
+        cand.warning = L"Read " + std::to_wstring(cand.maps.size()) + L" of " +
+                       std::to_wstring(marker.count) +
+                       L" map records before the directory ended.";
+      if (marker.compressed) cand.source = "compressed map directory";
+      // Keep structurally valid records regardless of whether their labels look
+      // generated, localized, numeric, or unfamiliar.
+      if (betterMapCandidate(cand, best)) {
+        best = std::move(cand);
+        haveBest = true;
       }
     } catch (const std::exception&) {
       // try the next marker
     }
   }
-  if (haveBest && (best.warning.empty() || best.maps.size() >= 2 ||
-      std::any_of(best.maps.begin(), best.maps.end(), [](const MapRow& row) { return row.defined; }))) {
+  if (haveBest) {
     if (!best.warning.empty()) warnings.push_back(best.warning);
     return best;
   }
@@ -1317,7 +1343,7 @@ inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
   const size_t fallbackLimit = haveVersionDirectory ? mapLimit : std::min<size_t>(mapLimit, 0x10000);
   Candidate scanned = scanMapDirectory(d, fallbackLimit, version);
   if (!scanned.maps.empty() &&
-      (!haveBest || scanned.maps.size() > best.maps.size())) {
+      (!haveBest || betterMapCandidate(scanned, best))) {
     warnings.push_back(L"Map records recovered by bounded sequential scan; map count is heuristic.");
     return scanned;
   }

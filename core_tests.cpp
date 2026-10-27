@@ -184,10 +184,36 @@ int main() {
   assert(allMarkers.back().at == 309);
 
   Candidate completeMapDirectory;
+  completeMapDirectory.source = "map directory";
+  completeMapDirectory.maps = {{L"Bosch map", L"", false},
+                               {L"Denso map 2", L"", false},
+                               {L"MAP_123", L"", true}};
   Candidate partialMapDirectory;
-  partialMapDirectory.warning = L"Read 8 of 10 map records before the directory ended.";
+  partialMapDirectory.source = "map directory";
+  partialMapDirectory.maps = {{L"Generated supplier label", L"", false},
+                              {L"Valid_Name", L"", true}};
+  partialMapDirectory.warning = L"Read 2 of 10 map records before the directory ended.";
   assert(!hasPartialMapDirectory(completeMapDirectory));
   assert(hasPartialMapDirectory(partialMapDirectory));
+  assert(betterMapCandidate(completeMapDirectory, partialMapDirectory));
+  assert(definedMapCount(completeMapDirectory) == 1);
+  assert(definedMapCount(partialMapDirectory) == 1);
+  Candidate longerGeneratedDirectory;
+  longerGeneratedDirectory.source = "map directory";
+  longerGeneratedDirectory.maps = {{L"Bosch map", L"", false},
+                                   {L"Denso map", L"", false},
+                                   {L"Siemens map", L"", false},
+                                   {L"Continental map", L"", false}};
+  Candidate shorterHumanDirectory;
+  shorterHumanDirectory.source = "map directory";
+  shorterHumanDirectory.maps = {{L"Boost pressure target", L"", true}};
+  assert(betterMapCandidate(longerGeneratedDirectory, shorterHumanDirectory));
+  Candidate oneRecord;
+  oneRecord.source = "scanned map directory";
+  oneRecord.warning = L"Recovered by sequential scan; directory count is heuristic.";
+  oneRecord.maps = {{L"TorqueLimit", L"", true}};
+  Candidate empty;
+  assert(betterMapCandidate(oneRecord, empty));
 
   // Invalid version-array dimensions must not be dispatched as a valid array.
   Bytes invalidVersioned = versioned;

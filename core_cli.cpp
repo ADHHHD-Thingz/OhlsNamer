@@ -25,21 +25,14 @@ int main(int argc, char** argv) {
     if (getenv("MAP_AUDIT")) {
       printf("  map-audit total=%zu defined=%d skipped=%d\n",
              a.mapCount, a.definedCount, a.skippedCount);
-      size_t shown = 0;
-      size_t shownDefined = 0;
+      size_t index = 0;
       for (const auto& m : a.mapDetails) {
         std::string name = ols::utf8(m.name);
         std::string description = ols::utf8(m.description);
-        if (name.size() > 100) name.resize(100);
-        if (description.size() > 100) description.resize(100);
-        if (m.defined && shownDefined < 10) {
-          printf("  map-defined name=%s description=%s\n", name.c_str(), description.c_str());
-          ++shownDefined;
-        } else if (!m.defined && shown < 10) {
-          printf("  map-skipped name=%s description=%s\n", name.c_str(), description.c_str());
-          ++shown;
-        }
-        if (shown >= 10 && shownDefined >= 10) break;
+        if (name.size() > 4096) name.resize(4096);
+        if (description.size() > 4096) description.resize(4096);
+        printf("  map-record index=%zu defined=%d name=%s description=%s\n",
+               index++, m.defined ? 1 : 0, name.c_str(), description.c_str());
       }
     }
   }
