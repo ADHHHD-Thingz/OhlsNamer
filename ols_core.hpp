@@ -1226,8 +1226,8 @@ inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
       // try the next marker
     }
   }
-  if (haveBest && (best.maps.size() >= 2 || std::any_of(best.maps.begin(), best.maps.end(),
-      [](const MapRow& row) { return row.defined; }))) {
+  if (haveBest && (best.warning.empty() || best.maps.size() >= 2 ||
+      std::any_of(best.maps.begin(), best.maps.end(), [](const MapRow& row) { return row.defined; }))) {
     if (!best.warning.empty()) warnings.push_back(best.warning);
     return best;
   }
