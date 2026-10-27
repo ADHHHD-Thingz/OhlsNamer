@@ -328,7 +328,12 @@ inline bool isPlaceholderLabel(const ws& raw) {
       bool numeric = std::all_of(cleaned.begin(), cleaned.end(), [](wchar_t c) {
         return (c >= L'0' && c <= L'9') || c == 0x00d7;
       });
-      if (!numeric && !technical.count(cleaned) && !std::regex_match(cleaned, DIMONLY))
+      bool hexIndex = cleaned.size() > 2 && cleaned[0] == L'0' && cleaned[1] == L'x' &&
+          std::all_of(cleaned.begin() + 2, cleaned.end(), [](wchar_t c) {
+            return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f');
+          });
+      if (!numeric && !hexIndex && !technical.count(cleaned) &&
+          !std::regex_match(cleaned, DIMONLY))
         hasHumanTailWord = true;
       token.clear();
     };
