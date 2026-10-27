@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.16
+
+- Normalize single-quoted WinOLS generated supplier labels (for example, `Map 'Bosch II 16'`) before placeholder detection, fixing inflated defined-map counts in Audi Q3 EDC17C46 CM/CN projects.
+- Add regression tests for single-quoted Bosch/Denso family labels and update fixture expectations so both Q3 projects count zero human-named maps.
+- Preserve descriptive labels and double-quoted placeholder handling.
+
 ## 1.3.15
 
 - Exclude generated layout/type labels such as `Kennfeld "Denso Float"` and `Kennfeld "Bosch III 16/8"` from defined-map counts.

@@ -339,7 +339,11 @@ inline bool isPlaceholderLabel(const ws& raw) {
   }
   if (statistical.rfind(L"statist", 0) == 0) return true;
   if (std::regex_search(s, GENERIC)) return true;
-  if (std::regex_match(s, FAMILY_MAP)) return true;
+  // WinOLS may serialize the same generated family label with either quote style.
+  // Canonicalize apostrophes only for this narrowly-scoped placeholder test.
+  ws familyLabel = s;
+  std::replace(familyLabel.begin(), familyLabel.end(), static_cast<wchar_t>(39), static_cast<wchar_t>(34));
+  if (std::regex_match(familyLabel, FAMILY_MAP)) return true;
   if (std::regex_match(s, PRODUCER_FAMILY)) return true;
   // WinOLS-generated supplier map labels can carry machine-generated
   // formatting (e.g. "Bosch map 2: 16 bit / 16x16"). Exclude these only

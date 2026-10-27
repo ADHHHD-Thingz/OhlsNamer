@@ -125,7 +125,9 @@ int main() {
            ws(L"Kennfeld \"Denso Vertikal 16\""),
            ws(L"Kennfeld \"Bosch II 16\""),
            ws(L"Kennfeld \"Bosch III 16/8\""),
-           ws(L"Kennfeld \"Denso Float\"")}) {
+           ws(L"Kennfeld \"Denso Float\""),
+           ws(L"Map 'Bosch II 16'"), ws(L"Map 'Bosch II 16/8'"),
+           ws(L"Kennfeld 'Denso Float'")}) {
     assert(!isDefinedMap(L"", generatedDescription));
   }
   assert(isDefinedMap(L"Bosch torque limiter", L""));
