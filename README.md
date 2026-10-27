@@ -28,6 +28,12 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 - Restores the last-used directory and recursive-scan preference between launches
 - Double-click a project to inspect parsed header fields, identity sources, map evidence and warnings
 
+## Large database performance
+
+The analyzer uses a bounded pool of up to four workers and performs a fast candidate-byte search for map-directory markers. It also reuses the validated version directory and caches a per-process software-number regular expression. These changes reduce repeated work without weakening marker validation.
+
+For collections of 4,000+ projects, actual throughput still depends on OLS file sizes, disk type, compression, and the number of projects requiring full-file fallback scans. No fixed files-per-second claim is made without a representative benchmark. Peak memory should be measured before increasing worker count; each worker holds a project buffer and may allocate temporary parsing/decompression buffers.
+
 ## Version 1.3.8
 
 - Removes repeated identity phrases even when one slot contains a longer phrase (for example, a make repeated at the start of the model).
