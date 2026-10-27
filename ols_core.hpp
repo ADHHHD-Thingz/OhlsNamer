@@ -271,6 +271,13 @@ inline bool isPlaceholderLabel(const ws& raw) {
       L"^(map|kennfeld|kennlinie|einzelwert|value|curve|potential(?:\\s+map)?|pot\\.?\\s*map|"
       L"my\\s+map|new\\s+map|unnamed|untitled)(?:\\s*[#:_-]?\\s*\\d+)?$",
       fl);
+  // Exclude generated family/supplier/index labels such as Map "Bosch II 16".
+  static const R FAMILY_MAP(
+      L"^(?:map|kennfeld|kennlinie)\\s*\\\"?\\s*(?:bosch|siemens|continental|delphi|denso|marelli|"
+      L"magneti(?:\\s+marelli)?|delco|visteon|temic|keihin|hitachi|sagem|lucas|motorola|trionic|transtron|"
+      L"vdo|kefico|uaes|weifu|mitsubishi|panasonic|vale[oó]|aptiv|renesas|hella|aisin|zf|statistical)"
+      L"(?:\\s+(?:ii|iii|iv|vertikal|vertical|horizontal))?\\s+\\d+\\s*\\\"?\\s*(?:\\(!\\))?$",
+      fl);
   // WinOLS-generated supplier labels are placeholders, not human-authored map names.
   // Supplier-generated names are commonly numbered and may include the
   // detected dimensions in parentheses/brackets. Exclude only the generated
@@ -308,6 +315,7 @@ inline bool isPlaceholderLabel(const ws& raw) {
   if (ENV.count(n)) return true;
   if (n.rfind(L"imported from", 0) == 0) return true;
   if (std::regex_search(s, GENERIC)) return true;
+  if (std::regex_match(s, FAMILY_MAP)) return true;
   // WinOLS-generated supplier map labels can carry machine-generated
   // formatting (e.g. "Bosch map 2: 16 bit / 16x16"). Exclude these only
   // when the tail contains numeric/dimension/encoding tokens and no human words.
@@ -401,15 +409,14 @@ inline bool isHexdump(const ws& description) {
 }
 
 inline bool isDefinedMap(const ws& name, const ws& description) {
-  // WinOLS often generates supplier labels ("Bosch map", "Denso map",
-  // "Siemens map 2", etc.) for automatically detected maps. Those are not
-  // human-authored map names and must never inflate the filename map count,
-  // even if a description field happens to contain dimensions or other text.
-  // Count the map's actual name only; a description is supporting metadata,
-  // not a substitute for a human-assigned name.
-  (void)description;
+  // Prefer the explicit map name when present. Some OLS schema families store
+  // human-assigned labels in the description field and leave the name empty;
+  // counting only name silently drops real maps (e.g. DTC-off and torque maps).
+  // A non-empty generated name remains authoritative as a placeholder.
   ws t = jsTrim(removeNul(name));
-  return !t.empty() && !isPlaceholderLabel(t);
+  if (!t.empty()) return !isPlaceholderLabel(t);
+  ws fallback = jsTrim(removeNul(description));
+  return !fallback.empty() && !isPlaceholderLabel(fallback);
 }
 
 inline bool isIdent(const ws& s) {

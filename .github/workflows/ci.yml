@@ -29,6 +29,32 @@ jobs:
           MAP_AUDIT=1 ./core_cli "${files[@]}" > olstest-map-audit.txt
           test "$(grep -c '^  map-audit total=' olstest-map-audit.txt)" -eq "${#files[@]}"
           test "$(grep -c '^  map-record index=' olstest-map-audit.txt)" -gt 0
+          declare -A expected_defined=(
+            ["Alfa Romeo 147 EDC15 0281010332 (33).ols"]=33
+            ["Audi A4 EDC15 038906019LJ (88).ols"]=88
+            ["BMW 3er EDC17CP02 08506199 (24).ols"]=0
+            ["Chrysler Voyager 0281010814 (17).ols"]=17
+            ["Dacia Duster SID305306 (2).ols"]=2
+            ["Ford Transit EPIC (9).ols"]=9
+            ["Honda Civic SH7058 (76).ols"]=76
+            ["Jaguar XK 0030650093 A (12667).ols"]=12667
+            ["MB E200 MED17.7.2 (0).ols"]=0
+            ["Subaru impreza denso (292).ols"]=292
+            ["Toyota FJ35 DENSO (8).ols"]=8
+            ["Toyota Hiace 89663 26432 (14).ols"]=0
+            ["Toyota Hilux RX703200 (0).ols"]=0
+            ["Toyota Unknown SHXX (57).ols"]=57
+            ["Toyota Yaris GR R7F701216 (0).ols"]=0
+            ["VW Crafter EDC16CP34 (2).ols"]=2
+            ["VW Golf4 038906012L 0281010112 (14).ols"]=14
+          )
+          for f in "${files[@]}"; do
+            base=${f##*/}
+            expected=${expected_defined[$base]:-}
+            test -n "$expected" || { echo "Missing expected map-count fixture: $base"; exit 1; }
+            actual=$(awk -v file="$f" '$0 == file { found=1; next } found && /^  map-audit total=/ { if (match($0, /defined=[0-9]+/)) { print substr($0, RSTART+8, RLENGTH-8); exit } }' olstest-map-audit.txt)
+            if [ "$actual" != "$expected" ]; then echo "Map count mismatch: $base expected=$expected actual=$actual"; exit 1; fi
+          done
           echo "=== OLS fixture map-count summary ==="
           awk '/^olstest\// { file=$1; sub(/\.ols$/, "", file); next } /^  ok=/ { if (match($0, /maps=[0-9]+ defined=[0-9]+ skipped=[0-9]+/)) print file " " substr($0, RSTART, RLENGTH); next } /^  map-audit total=/ { print file " " $0 }' olstest-map-audit.txt
       - name: Upload complete OLS map audit

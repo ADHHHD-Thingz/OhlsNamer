@@ -99,7 +99,19 @@ int main() {
            ws(L"Boost pressure limit 1")}) {
     assert(isDefinedMap(humanName, L""));
   }
-  assert(!isDefinedMap(L"", L"Human-looking description must not replace a missing map name"));
+  // Some OLS families keep human map titles in descriptions when name is empty.
+  assert(isDefinedMap(L"", L"Human-looking description must replace a missing map name"));
+  assert(isDefinedMap(L"", L"EGR"));
+  assert(isDefinedMap(L"", L"P0420 DTC OFF ( Replace the dtc line with 0)"));
+  assert(!isDefinedMap(L"", L"Hexdump"));
+  assert(!isDefinedMap(L"", L"Map"));
+  for (const ws& generatedDescription : {
+           ws(L"Map \"Bosch II 16\""), ws(L"Map \"Bosch 16\""),
+           ws(L"Map \"Statistical 16\" (!)"),
+           ws(L"Kennfeld \"Denso Vertikal 16\""),
+           ws(L"Kennfeld \"Bosch II 16\"")}) {
+    assert(!isDefinedMap(L"", generatedDescription));
+  }
   assert(isDefinedMap(L"Bosch torque limiter", L""));
   assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
