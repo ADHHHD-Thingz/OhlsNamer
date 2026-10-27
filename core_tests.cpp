@@ -20,7 +20,7 @@ int main() {
   assert(inferEcuManufacturerFromFamily(inferEcuFamily(familyBytes.data(),familyBytes.size()))==L"Bosch");
   // Manufacturer names are not ECU families. Hardware/part numbers next to
   // "Denso" or "Keihin" must not become the ECU slot.
-  const std::string densoNoise="Denso89663-26432 DENSO2005 Keihin37805 Me-b1G";
+  const std::string densoNoise="Denso89663-26432 DENSO2005 Keihin37805 Me-b1G Me-6P";
   Bytes densoBytes(densoNoise.begin(),densoNoise.end());
   assert(inferEcuFamily(densoBytes.data(),densoBytes.size()).empty());
   const std::string realFamily="project DENSO EDC17CP02 hardware";

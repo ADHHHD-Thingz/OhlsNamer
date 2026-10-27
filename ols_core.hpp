@@ -1543,6 +1543,20 @@ inline ws inferEcuFamily(const uint8_t* d,size_t n) {
     ws x=jsTrim((*it)[0].str());
     // Reject alphabetic prose such as German "Meine", which can match the "ME" prefix.
     if(x.size()<4||x.size()>32||x.find_first_of(L"0123456789")==ws::npos)continue;
+    // Short ME-family hits with a digit immediately followed by a letter
+    // (e.g. "Me-6P") are not real families. Longer families such as EDC17CP02
+    // are unaffected.
+    ws lowX=lower(x);
+    if(lowX.rfind(L"me",0)==0&&lowX.rfind(L"med",0)!=0&&x.size()<=8){
+      bool digitThenLetter=false;
+      for(size_t i=0;i+1<x.size();++i){
+        if((x[i]>=L'0'&&x[i]<=L'9')&&
+           ((x[i+1]>=L'A'&&x[i+1]<=L'Z')||(x[i+1]>=L'a'&&x[i+1]<=L'z'))){
+          digitThenLetter=true;break;
+        }
+      }
+      if(digitThenLetter)continue;
+    }
     ws nrm=lower(x);
     int score=10;
     if(nrm.find(L'.')!=ws::npos)score+=4;
