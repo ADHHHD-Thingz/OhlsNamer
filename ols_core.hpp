@@ -1340,7 +1340,9 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   // Prefer the dedicated original-source filename field; scan binary strings only as fallback.
   ws metadataSoftware=firstFilled({get("sw_number")});ws lowSw=lower(metadataSoftware);
   bool generic=metadataSoftware.empty()||lowSw==L"unknown"||lowSw==L"n/a"||lowSw==L"none"||lowSw==L"not available"||lowSw==L"not identified"||lowSw==L"original"||lowSw==L"stock"||lowSw==L"dump"||lowSw==L"hex"||lowSw==L"rom"||lowSw==L"software"||lowSw==L"sw"||lowSw==L"-"||lowSw==L"?"||lowSw==L"%"||lowSw==lower(ecu);
-  bool boschPart=std::regex_match(metadataSoftware,std::wregex(L"(0261S[0-9]{5}|0281[0-9]{6})",std::regex::ECMAScript|std::regex::icase))&&lower(ecuManufacturer).find(L"bosch")!=ws::npos;
+  static const std::wregex boschPartNumberRe(
+      L"(0261S[0-9]{5}|0281[0-9]{6})", std::regex::ECMAScript | std::regex::icase);
+  bool boschPart=std::regex_match(metadataSoftware,boschPartNumberRe)&&lower(ecuManufacturer).find(L"bosch")!=ws::npos;
   ws embeddedSoftware=softwareVersionFromSourceFilename(embedded,brand,model,ecu);
   bool useFallback=!embeddedSoftware.empty()&&(generic||boschPart);
   ws software=useFallback?embeddedSoftware:metadataSoftware;
