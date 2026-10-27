@@ -92,7 +92,7 @@ int main() {
   }
   // Genuine map names remain countable even when they mention a supplier.
   for (const ws& humanName : {
-           ws(L"Bosch torque limiter"), ws(L"Denso injection quantity limiter"),
+  assert(isDefinedMap(L"", L"Kennfeld \"Denso injection quantity limiter\""));
            ws(L"Bosch map torque limiter"),
            ws(L"Siemens rail pressure target"), ws(L"Continental boost pressure limit"),
            ws(L"Torque limiter"), ws(L"Driver wish"), ws(L"KFZWOP"), ws(L"LDRXN"),
@@ -124,9 +124,9 @@ int main() {
            ws(L"Map \"Bosch II 16\""), ws(L"Map \"Bosch 16\""),
            ws(L"Map \"Statistical 16\" (!)"),
            ws(L"Kennfeld \"Denso Vertikal 16\""),
-           ws(L"Kennfeld \"Bosch II 16\"")),
-           ws(L"Kennfeld \\"Bosch III 16/8\\""),
-           ws(L"Kennfeld \\"Denso Float\\"")}) {
+           ws(L"Kennfeld \"Bosch II 16\""),
+           ws(L"Kennfeld \"Bosch III 16/8\""),
+           ws(L"Kennfeld \"Denso Float\"")}) {
     assert(!isDefinedMap(L"", generatedDescription));
   }
   assert(isDefinedMap(L"Bosch torque limiter", L""));
