@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased — large-corpus performance
+## 1.3.9
 
-- Accelerate map-marker discovery by using the C runtime's optimized `memchr` to find candidate first bytes before validating full markers.
+- Exclude WinOLS-generated supplier placeholders even when they include map indices, hexadecimal IDs, dimensions, bit width or endian labels (e.g. “Bosch map 2: 16 bit / 16x16”), while retaining genuinely human-authored labels such as “Bosch map torque limiter”.
+- Apply the same placeholder rule to localized supplier labels such as “Bosch Kennfeld” and “Siemens Kennlinie”.
+- Keep the map count based on human-named map names only; a populated description never substitutes for a missing or generated name.
+- Accelerate M1 version-directory dispatch with optimized candidate-byte searching while retaining structural validation and preference for corroborated M3 directories over marker-shaped payload collisions.
 - Reuse the already validated M1 version directory during map extraction instead of parsing it a second time.
 - Cache the Bosch software-part-number regular expression rather than recompiling it for every OLS project.
 - Preserve the four-worker cap; further concurrency changes should be guided by benchmarks on representative 4,000+ file corpora and peak-memory measurements.
+- Add regression cases for generated-label variants, human-name preservation, M1 collisions, malformed input and schema-boundary dispatch.
 
 
 ## 1.3.8
