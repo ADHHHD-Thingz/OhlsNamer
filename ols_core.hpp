@@ -1096,8 +1096,17 @@ inline bool plausibleMapPrefix(const uint8_t* d, size_t n, size_t start, uint32_
     if (version >= 287) probe.ml();
     if (version >= 93) probe.u8();
     ws description = probe.ml();
-    return description.size() <= 200 &&
-           (hasMapText(description) || version >= 80);
+    if (description.size() > 200) return false;
+    if (hasMapText(description)) return true;
+    // Empty descriptions are possible when the separately named-map field is
+    // present. Validate that field cheaply before attempting a full map parse.
+    if (version >= 80) {
+      for (int i = 0; i < 5; ++i) probe.u32();
+      probe.u32();  // folder id
+      ws name = probe.str();
+      return name.size() <= 200 && hasMapText(name);
+    }
+    return false;
   } catch (const std::exception&) {
     return false;
   }
@@ -1214,6 +1223,19 @@ inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
     } catch (const std::exception&) {
       // try the next marker
     }
+  }
+  if (haveBest && (best.maps.size() >= 2 || best.definedCount > 0)) {
+    if (!best.warning.empty()) warnings.push_back(best.warning);
+    return best;
+  }
+
+  // Fallback for schema families/projects where no valid count marker could
+  // be parsed, or the only marker candidate is a single unnamed placeholder.
+  Candidate scanned = scanMapDirectory(d, mapLimit, version);
+  if (!scanned.maps.empty() &&
+      (!haveBest || scanned.maps.size() > best.maps.size())) {
+    warnings.push_back(L"Map records recovered by bounded sequential scan; map count is heuristic.");
+    return scanned;
   }
   if (haveBest) {
     if (!best.warning.empty()) warnings.push_back(best.warning);
