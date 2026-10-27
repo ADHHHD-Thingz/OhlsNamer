@@ -283,9 +283,9 @@ inline bool isPlaceholderLabel(const ws& raw) {
       L"(?:\\s*[\\(\\[]?\\s*\\d+\\s*[xX×*]\\s*\\d+\\s*[\\)\\]]?)?$",
       fl);
   static const R ONLYNUM(L"^\\d+$");
-  static const R DIMONLY(L"^\\d+\\s*[x\x00d7*]\\s*\\d+$", fl);
+  static const R DIMONLY(L"^\d+\s*[xX×*]\s*\d+$", fl);
   static const R BIT(L"\\d+\\s*-?\\s*bits?\\b", fl);
-  static const R DIM(L"\\d+\\s*[x\x00d7]\\s*\\d+");
+  static const R DIM(L"\d+\s*[xX×*]\s*\d+", fl);
   static const R ORDER(L"\\b(lohi|hilo|big[\\s-]?endian|little[\\s-]?endian)\\b", fl);
   static const R BITORDER(L"^\\d+\\s*-?\\s*bits?\\b[\\s,.-]*(lohi|hilo)\\b", fl);
   // These expressions are used in the per-map hot path; cache them for large
