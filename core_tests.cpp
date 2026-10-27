@@ -79,12 +79,17 @@ int main() {
            ws(L"Bosch map (16 X 16)"),
            ws(L"Bosch map [4]"), ws(L"Denso Map (8 x 8)"), ws(L"Siemens map 2"),
            ws(L"Continental map 12"), ws(L"Delphi map (1)"), ws(L"Mitsubishi map 7"),
-           ws(L"Valeo map (16×16)")}) {
+           ws(L"Valeo map (16×16)"),
+           ws(L"Bosch map 2: 16 bit / 16x16"),
+           ws(L"Denso Map #3 - 16-bit 8x8"),
+           ws(L"Siemens map (4) 32 bit little endian"),
+           ws(L"Bosch map 0x10")}) {
     assert(!isDefinedMap(generated, L""));
   }
   // Genuine map names remain countable even when they mention a supplier.
   for (const ws& humanName : {
            ws(L"Bosch torque limiter"), ws(L"Denso injection quantity limiter"),
+           ws(L"Bosch map torque limiter"),
            ws(L"Siemens rail pressure target"), ws(L"Continental boost pressure limit"),
            ws(L"Torque limiter"), ws(L"Driver wish"), ws(L"KFZWOP"), ws(L"LDRXN"),
            ws(L"Boost pressure limit 1")}) {
