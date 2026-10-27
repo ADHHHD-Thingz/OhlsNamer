@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — large-corpus performance
+
+- Accelerate map-marker discovery by using the C runtime's optimized `memchr` to find candidate first bytes before validating full markers.
+- Reuse the already validated M1 version directory during map extraction instead of parsing it a second time.
+- Cache the Bosch software-part-number regular expression rather than recompiling it for every OLS project.
+- Preserve the four-worker cap; further concurrency changes should be guided by benchmarks on representative 4,000+ file corpora and peak-memory measurements.
+
+
 ## 1.3.8
 
 - Remove repeated identity phrases embedded in longer metadata slots, such as a make repeated inside the model name.
