@@ -61,6 +61,22 @@ int main() {
   assert(!isDefinedMap(L"Siemens map 2", L""));
   assert(!isDefinedMap(L"Bosch map", L"Fuel / 16 x 16 / 16 bit"));
   assert(!isDefinedMap(L"Denso Map", L"Torque limiter"));
+  // Generated supplier labels: case/number/dimension variants must not count.
+  for (const ws& generated : {
+           ws(L"Bosch map (1)"), ws(L"Bosch Map #2"), ws(L"Bosch map 3 (16x16)"),
+           ws(L"Bosch map [4]"), ws(L"Denso Map (8 x 8)"), ws(L"Siemens map 2"),
+           ws(L"Continental map 12"), ws(L"Delphi map (1)"), ws(L"Mitsubishi map 7"),
+           ws(L"Valeo map (16×16)")}) {
+    assert(!isDefinedMap(generated, L""));
+  }
+  // Genuine map names remain countable even when they mention a supplier.
+  for (const ws& humanName : {
+           ws(L"Bosch torque limiter"), ws(L"Denso injection quantity limiter"),
+           ws(L"Siemens rail pressure target"), ws(L"Continental boost pressure limit"),
+           ws(L"Torque limiter"), ws(L"Driver wish"), ws(L"KFZWOP"), ws(L"LDRXN"),
+           ws(L"Boost pressure limit 1")}) {
+    assert(isDefinedMap(humanName, L""));
+  }
   assert(!isDefinedMap(L"", L"Human-looking description must not replace a missing map name"));
   assert(isDefinedMap(L"Bosch torque limiter", L""));
   assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
