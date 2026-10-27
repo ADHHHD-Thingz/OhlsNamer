@@ -278,9 +278,7 @@ inline bool isPlaceholderLabel(const ws& raw) {
   static const R PRODUCER_MAP(
       L"^(bosch|siemens|continental|delphi|denso|marelli|magneti(?:\\s+marelli)?|delco|visteon|temic|"
       L"keihin|hitachi|sagem|lucas|motorola|trionic|transtron|vdo|kefico|uaes|weifu|mitsubishi|"
-      L"panasonic|vale[oó]|aptiv|renesas|infineon|hella|aisin|zf)\\s+map"
-      L"(?:\\s*(?:[#:_-]?\\s*\\d+|\\(\\s*\\d+\\s*\\)|\\[\\s*\\d+\\s*\\]))?"
-      L"(?:\\s*[\\(\\[]?\\s*\\d+\\s*[xX×*]\\s*\\d+\\s*[\\)\\]]?)?$",
+      L"panasonic|vale[oó]|aptiv|renesas|infineon|hella|aisin|zf)\\s+map\\b",
       fl);
   static const R ONLYNUM(L"^\\d+$");
   static const R HEXID(L"^(?:0x[0-9a-f]{1,8}|(?=[0-9a-f]{8,16}$)(?=[0-9a-f]*[0-9])[0-9a-f]+)$", fl);
@@ -308,7 +306,41 @@ inline bool isPlaceholderLabel(const ws& raw) {
   if (ENV.count(n)) return true;
   if (n.rfind(L"imported from", 0) == 0) return true;
   if (std::regex_search(s, GENERIC)) return true;
-  if (std::regex_search(s, PRODUCER_MAP)) return true;
+  // WinOLS-generated supplier map labels can carry machine-generated
+  // formatting (e.g. "Bosch map 2: 16 bit / 16x16"). Exclude these only
+  // when the tail contains numeric/dimension/encoding tokens and no human words.
+  std::wsmatch producerMapMatch;
+  if (std::regex_search(s, producerMapMatch, PRODUCER_MAP) &&
+      producerMapMatch.position() == 0) {
+    ws tail = lower(s.substr((size_t)producerMapMatch.length()));
+    bool hasHumanTailWord = false;
+    ws token;
+    auto checkTailToken = [&]() {
+      if (token.empty()) return;
+      ws cleaned;
+      for (wchar_t c : token)
+        if ((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == 0x00d7)
+          cleaned += c;
+      if (cleaned.empty()) { token.clear(); return; }
+      static const std::set<ws> technical = {
+          L"bit", L"bits", L"lohi", L"hilo", L"bigendian", L"littleendian",
+          L"signed", L"unsigned", L"be", L"le", L"msb", L"lsb", L"x"};
+      bool numeric = std::all_of(cleaned.begin(), cleaned.end(), [](wchar_t c) {
+        return (c >= L'0' && c <= L'9') || c == 0x00d7;
+      });
+      if (!numeric && !technical.count(cleaned) && !std::regex_match(cleaned, DIMONLY))
+        hasHumanTailWord = true;
+      token.clear();
+    };
+    for (wchar_t c : tail) {
+      if ((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == 0x00d7)
+        token += c;
+      else
+        checkTailToken();
+    }
+    checkTailToken();
+    if (!hasHumanTailWord) return true;
+  }
   if (std::regex_search(s, ONLYNUM)) return true;
   if (std::regex_search(s, HEXID)) return true;
   if (std::regex_search(s, DIMONLY)) return true;
@@ -658,7 +690,16 @@ inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory&
   // ROM for marker-shaped bytes is both slow and prone to false dispatch.
   // Real corpus samples place M1 well inside this bounded header region.
   const size_t searchEnd = std::min<size_t>(n, 8u * 1024u * 1024u);
-  for (size_t p = 12; p + 4 <= searchEnd; ++p) {
+  // Search for the first byte of the little-endian M1 marker with memchr.
+  // The former byte-by-byte rd32 loop made four loads at every offset and
+  // examined nearly 8 MiB per project; that compounds on 4,000+ file corpora.
+  size_t cursor = 12;
+  const size_t last = searchEnd >= 4 ? searchEnd - 4 : 0;
+  while (cursor <= last) {
+    const void* hit = std::memchr(d + cursor, 0x99, last - cursor + 1);
+    if (!hit) break;
+    const size_t p = static_cast<const uint8_t*>(hit) - d;
+    cursor = p + 1;
     if (rd32(d, p) != 0x42007899u) continue;
     const uint32_t countMinusOne = rd32(d, p - 12);
     const uint32_t start = rd32(d, p - 8);
