@@ -57,6 +57,8 @@ int main() {
   assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
   assert(!isDefinedMap(L"Bosch 16 bit. 8 x 10", L""));
   assert(!isDefinedMap(L"Bosch 16 bit. 16 x 16", L""));
+  assert(!isDefinedMap(L"Bosch 16 bit. 16 X 16", L""));
+  assert(!isDefinedMap(L"Bosch 16 bit. 16*16", L""));
   assert(!isDefinedMap(L"16 bit. 16 x 16", L""));
   assert(isDefinedMap(L"LDRXN 16 bit. 16 x 16", L""));
   assert(isDefinedMap(L"Bosch torque limiter 16 bit. 16 x 16", L""));
@@ -69,6 +71,7 @@ int main() {
   // Generated supplier labels: case/number/dimension variants must not count.
   for (const ws& generated : {
            ws(L"Bosch map (1)"), ws(L"Bosch Map #2"), ws(L"Bosch map 3 (16x16)"),
+           ws(L"Bosch map (16 X 16)"),
            ws(L"Bosch map [4]"), ws(L"Denso Map (8 x 8)"), ws(L"Siemens map 2"),
            ws(L"Continental map 12"), ws(L"Delphi map (1)"), ws(L"Mitsubishi map 7"),
            ws(L"Valeo map (16×16)")}) {
