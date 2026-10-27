@@ -92,7 +92,7 @@ int main() {
   }
   // Genuine map names remain countable even when they mention a supplier.
   for (const ws& humanName : {
-  assert(isDefinedMap(L"", L"Kennfeld Denso injection quantity limiter"));
+            ws(L"Bosch map torque limiter"),
            ws(L"Bosch map torque limiter"),
            ws(L"Siemens rail pressure target"), ws(L"Continental boost pressure limit"),
            ws(L"Torque limiter"), ws(L"Driver wish"), ws(L"KFZWOP"), ws(L"LDRXN"),
@@ -130,7 +130,7 @@ int main() {
     assert(!isDefinedMap(L"", generatedDescription));
   }
   assert(isDefinedMap(L"Bosch torque limiter", L""));
-  assert(isDefinedMap(L"", L"Kennfeld \\"Denso injection quantity limiter\\""));
+  assert(isDefinedMap(L"", L"Kennfeld Denso injection quantity limiter"));
   assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
   assert(longName.size()<=240 && longName.find(L"(42).ols")!=ws::npos);
