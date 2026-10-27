@@ -272,10 +272,15 @@ inline bool isPlaceholderLabel(const ws& raw) {
       L"my\\s+map|new\\s+map|unnamed|untitled)(?:\\s*[#:_-]?\\s*\\d+)?$",
       fl);
   // WinOLS-generated supplier labels are placeholders, not human-authored map names.
+  // Supplier-generated names are commonly numbered and may include the
+  // detected dimensions in parentheses/brackets. Exclude only the generated
+  // "supplier map" form; don't exclude real names such as "Bosch torque limiter".
   static const R PRODUCER_MAP(
       L"^(bosch|siemens|continental|delphi|denso|marelli|magneti(?:\\s+marelli)?|delco|visteon|temic|"
-      L"keihin|hitachi|sagem|lucas|motorola|trionic|transtron|vdo|kefico|uaes|weifu)\\s+map"
-      L"(?:\\s*[#:_-]?\\s*\\d+)?$",
+      L"keihin|hitachi|sagem|lucas|motorola|trionic|transtron|vdo|kefico|uaes|weifu|mitsubishi|"
+      L"panasonic|vale[oó]|aptiv|renesas|infineon|hella|aisin|zf)\\s+map"
+      L"(?:\\s*(?:[#:_-]?\\s*\\d+|\\(\\s*\\d+\\s*\\)|\\[\\s*\\d+\\s*\\]))?"
+      L"(?:\\s*[\\(\\[]?\\s*\\d+\\s*[xX×*]\\s*\\d+\\s*[\\)\\]]?)?$",
       fl);
   static const R ONLYNUM(L"^\\d+$");
   static const R DIMONLY(L"^\\d+\\s*[x\x00d7*]\\s*\\d+$", fl);
