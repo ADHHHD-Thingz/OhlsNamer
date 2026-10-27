@@ -282,6 +282,8 @@ inline bool isPlaceholderLabel(const ws& raw) {
       fl);
   static const R ONLYNUM(L"^\\d+$");
   static const R HEXID(L"^(?:0x[0-9a-f]{1,8}|(?=[0-9a-f]{8,16}$)(?=[0-9a-f]*[0-9])[0-9a-f]+)$", fl);
+  static const R HEXADDRPAIR(L"^(?:0x)?[0-9a-f]{4,16}(?:\\s*/\\s*(?:0x)?[0-9a-f]{4,16})+$", fl);
+  static const R SHORTINDEX(L"^[a-z][0-9]$", fl);
   static const R DIMONLY(L"^\\d+\\s*[xX×*]\\s*\\d+$", fl);
   static const R BIT(L"\\d+\\s*-?\\s*bits?\\b", fl);
   static const R DIM(L"\\d+\\s*[xX×*]\\s*\\d+", fl);
@@ -348,6 +350,8 @@ inline bool isPlaceholderLabel(const ws& raw) {
   }
   if (std::regex_search(s, ONLYNUM)) return true;
   if (std::regex_search(s, HEXID)) return true;
+  if (std::regex_search(s, HEXADDRPAIR)) return true;
+  if (std::regex_search(s, SHORTINDEX)) return true;
   if (std::regex_search(s, DIMONLY)) return true;
 
   bool hasBit = std::regex_search(s, BIT);
