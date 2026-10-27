@@ -1078,6 +1078,97 @@ inline Candidate readMapBlock(const uint8_t* d, size_t n, size_t start, uint32_t
   return c;
 }
 
+inline bool hasMapText(const ws& value) {
+  for (wchar_t c : value) {
+    if ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') ||
+        (c >= 0x00c0 && c <= 0x00ff && c != 0x00d7 && c != 0x00f7))
+      return true;
+  }
+  return false;
+}
+
+inline bool plausibleMapPrefix(const uint8_t* d, size_t n, size_t start, uint32_t version) {
+  if (!d || start >= n || n - start < 16) return false;
+  try {
+    Seq probe(d, n, version, start);
+    if (version >= 268) probe.b();
+    if (version >= 282) probe.u32();
+    if (version >= 287) probe.ml();
+    if (version >= 93) probe.u8();
+    ws description = probe.ml();
+    return description.size() <= 200 &&
+           (hasMapText(description) || version >= 80);
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+inline bool readMapRecordAt(const uint8_t* d, size_t n, size_t start, uint32_t version,
+                            MapRow& row, size_t& end) {
+  if (!plausibleMapPrefix(d, n, start, version)) return false;
+  try {
+    Seq seq(d, n, version, start);
+    seq.map(row.name, row.description);
+    end = seq.pos;
+    if (end <= start + 16 || end > n || row.name.size() > 200 ||
+        row.description.size() > 200) return false;
+    if (!hasMapText(row.name) && !hasMapText(row.description)) return false;
+    if (!looksLikeRealMap(row.name, row.description)) return false;
+    row.defined = isDefinedMap(row.name, row.description);
+    return true;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+// Some OLS schema families lack a reliably parseable map-count marker. If the
+// explicit directory fails, scan the bounded serialized region for a valid
+// version-gated record prefix and follow sequential records with small padding.
+inline Candidate scanMapDirectory(const uint8_t* d, size_t n, uint32_t version) {
+  Candidate best;
+  best.source = "unread";
+  if (!d || n < 0x200) return best;
+  const size_t scanEnd = std::min<size_t>(n, 0x10000);
+  for (size_t start = 0x180; start + 16 < scanEnd; ++start) {
+    if (!plausibleMapPrefix(d, n, start, version)) continue;
+    Candidate candidate;
+    candidate.source = "scanned map directory";
+    size_t cursor = start;
+    while (candidate.maps.size() < 200000 && cursor + 16 < n) {
+      MapRow row;
+      size_t end = 0;
+      if (readMapRecordAt(d, n, cursor, version, row, end)) {
+        candidate.maps.push_back(std::move(row));
+        cursor = end;
+        continue;
+      }
+      bool nextFound = false;
+      const size_t gapEnd = std::min<size_t>(n - 16, cursor + 64);
+      for (size_t next = cursor + 1; next <= gapEnd; ++next) {
+        if (!plausibleMapPrefix(d, n, next, version)) continue;
+        MapRow nextRow;
+        size_t nextEnd = 0;
+        if (readMapRecordAt(d, n, next, version, nextRow, nextEnd)) {
+          candidate.maps.push_back(std::move(nextRow));
+          cursor = nextEnd;
+          nextFound = true;
+          break;
+        }
+      }
+      if (!nextFound) break;
+    }
+    if (candidate.maps.size() > best.maps.size()) best = std::move(candidate);
+    // Long sequences are strong evidence; avoid scanning thousands of offsets
+    // inside the same directory once it has been recovered.
+    if (best.maps.size() >= 1000) return best;
+  }
+  if (best.maps.size() >= 2 ||
+      (best.maps.size() == 1 && best.maps.front().defined)) return best;
+  Candidate none;
+  none.source = "unread";
+  return none;
+}
+
 inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
                              const VersionDirectory& versionDirectory, bool haveVersionDirectory,
                              std::vector<ws>& warnings) {
