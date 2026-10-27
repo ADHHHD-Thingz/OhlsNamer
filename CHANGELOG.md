@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.15
+
+- Exclude generated layout/type labels such as `Kennfeld "Denso Float"` and `Kennfeld "Bosch III 16/8"` from defined-map counts.
+- Add regression tests for these WinOLS-generated labels while preserving descriptive map names.
+- Extend CI map-count audits to all root-level OLS projects and assert expected counts for all ten uploaded files.
+
 ## 1.3.14
 
 - Exclude bare supplier/family labels such as `Bosch II` from real-map counts while preserving descriptive names such as `Bosch II torque limiter`.
