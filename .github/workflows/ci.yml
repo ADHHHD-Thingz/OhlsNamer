@@ -49,8 +49,13 @@ jobs:
             ["Toyota Yaris GR R7F701216 (0).ols"]=0
             ["VW Crafter EDC16CP34 (2).ols"]=2
             ["VW Golf4 038906012L 0281010112 (14).ols"]=14
+            ["Audi Q5 EDC17CP14 (1).ols"]=0
+            ["Mitsubishi ASX Denso 16 T1B1HEB1DV01 (1).ols"]=0
+            ["Nissan Navara Denso 16 E311U4D (2).ols"]=0
+            ["Subaru Impreza Denso 8 (3).ols"]=0
+            ["Volvo C70 EDC16C31 (1).ols"]=0
           )
-          for f in "${fixture_files[@]}"; do
+          for f in "${files[@]}"; do
             base=${f##*/}
             expected=${expected_defined[$base]:-}
             test -n "$expected" || { echo "Missing expected map-count fixture: $base"; exit 1; }
