@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.17
+
+- Stop treating manufacturer names (Denso, Keihin, Temic, Kefico, Transtron) as ECU-family prefixes and require a digit immediately after the family prefix. This prevents garbage ECU slots such as `DENSO2005`, `Denso89663-26432` and `Me-b1G`.
+- When no ECU family is present, use a non-empty hardware number as the ECU identity token so projects still receive a useful part identifier (for example Bosch `038906012L` or Denso `89663-26432`).
+- Add regression coverage for the tighter family inference.
+
 ## 1.3.16
 
 - Normalize single-quoted WinOLS generated supplier labels (for example, `Map 'Bosch II 16'`) before placeholder detection, fixing inflated defined-map counts in Audi Q3 EDC17C46 CM/CN projects.

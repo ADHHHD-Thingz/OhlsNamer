@@ -1532,7 +1532,11 @@ inline ws selectSourceFilename(const ws& original,const ws& scanned) {
 }
 inline ws inferEcuFamily(const uint8_t* d,size_t n) {
   ws text=decode(d,n);
-  static const std::wregex re(LR"(\b(?:ME|MED|EDC|DCM|SID|SIMOS|MD1|MG1|EMS|PCR|PSG|DCU|MSS|DDE|MSD|MSV|MJD|IAW|MOTRONIC|KEFICO|TRANSTRON|KEIHIN|DENSO|TEMIC)\s*[-.]?\s*[A-Z0-9]{1,8}(?:[.-][A-Z0-9]{1,8}){0,3}\b)",std::regex::ECMAScript|std::regex::icase);
+  // Only real ECU-family model prefixes. Manufacturer names (Denso, Keihin,
+  // Temic, Kefico, Transtron) are not families. A digit must follow the
+  // prefix (optionally after one separator) so short prefixes such as ME
+  // cannot match prose or random tokens such as "Me-b1G".
+  static const std::wregex re(LR"(\b(?:ME|MED|EDC|DCM|SID|SIMOS|MD1|MG1|EMS|PCR|PSG|DCU|MSS|DDE|MSD|MSV|MJD|IAW|MOTRONIC)\s*[-.]?\s*\d[A-Z0-9.]{0,12}(?:[.-][A-Z0-9]{1,8}){0,2}\b)",std::regex::ECMAScript|std::regex::icase);
   struct Hit { ws value; size_t offset; int score; };
   std::vector<Hit> hits;
   for(std::wsregex_iterator it(text.begin(),text.end(),re),end;it!=end;++it) {
@@ -1543,7 +1547,7 @@ inline ws inferEcuFamily(const uint8_t* d,size_t n) {
     int score=10;
     if(nrm.find(L'.')!=ws::npos)score+=4;
     if(nrm.find(L'-')!=ws::npos)score+=1;
-    static const std::vector<ws> prefixes={L"motronic",L"transtron",L"kefico",L"simos",L"keihin",L"denso",L"temic",L"med",L"edc",L"dcm",L"sid",L"md1",L"mg1",L"ems",L"pcr",L"psg",L"dcu",L"mss",L"dde",L"msd",L"msv",L"mjd",L"iaw",L"me"};
+    static const std::vector<ws> prefixes={L"motronic",L"simos",L"med",L"edc",L"dcm",L"sid",L"md1",L"mg1",L"ems",L"pcr",L"psg",L"dcu",L"mss",L"dde",L"msd",L"msv",L"mjd",L"iaw",L"me"};
     for(const auto& prefix:prefixes)if(nrm.rfind(prefix,0)==0){score+=(int)prefix.size();break;}
     hits.push_back({x,(size_t)(*it).position(),score});
   }
@@ -1588,6 +1592,16 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   ws model=firstFilled({get("model"),get("type"),get("engine_code")});if(model.empty())model=L"Unknown";
   ws explicitEcu=firstFilled({get("ecu_name")});ws inferredEcu=explicitEcu.empty()?inferEcuFamily(d,n):ws();
   ws ecu=!explicitEcu.empty()?explicitEcu:(!inferredEcu.empty()?inferredEcu:ws(L"Unknown"));
+  // When no ECU family is known, the hardware number is a useful identity
+  // token (e.g. Bosch 038906012L, Denso 89663-26432). Prefer it over leaving
+  // the ECU slot empty so the proposed name still carries a part identifier.
+  ws rawHw=firstFilled({get("hw_number")});
+  if(isUnknownNamePart(ecu)&&!isUnknownNamePart(rawHw)) {
+    ws hw=jsTrim(rawHw);
+    while(!hw.empty()&&(hw.back()==L'-'||hw.back()==L' '))hw.pop_back();
+    if(!hw.empty()&&hw.find_first_of(L"0123456789")!=ws::npos&&hw.size()>=5&&hw.size()<=32)
+      ecu=hw;
+  }
   ws rawMaker=get("manufacturer");ws ecuManufacturer=identifyEcuManufacturer(rawMaker);
   bool knownMaker=false;for(const auto& m:ecuManufacturerCatalogue())if(catalogNorm(m)==catalogNorm(ecuManufacturer))knownMaker=true;
   if(!knownMaker) {
@@ -1623,7 +1637,7 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   a.hardwareNumber=get("hw_number");a.productionNumber=get("production_no");
   a.engineCode=get("engine_code");a.vehicleYear=get("year");a.originalFileName=original;a.embeddedHexFilename=embedded;
   a.softwareSource=software.empty()?L"unknown":(useFallback?L"embedded hex filename":L"metadata");
-  a.ecuSource=!explicitEcu.empty()?L"metadata":(!inferredEcu.empty()?L"inferred from project text":L"unknown");
+  a.ecuSource=!explicitEcu.empty()?L"metadata":(!inferredEcu.empty()?L"inferred from project text":(!isUnknownNamePart(ecu)?L"hardware number":L"unknown"));
   a.mapCount=ex.maps.size();
   for(const auto&m:ex.maps) {
     if(m.defined)a.definedCount++;

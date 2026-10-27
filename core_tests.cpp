@@ -18,6 +18,14 @@ int main() {
   Bytes familyBytes(familyNoise.begin(),familyNoise.end());
   assert(inferEcuFamily(familyBytes.data(),familyBytes.size())==L"ME7.9.10");
   assert(inferEcuManufacturerFromFamily(inferEcuFamily(familyBytes.data(),familyBytes.size()))==L"Bosch");
+  // Manufacturer names are not ECU families. Hardware/part numbers next to
+  // "Denso" or "Keihin" must not become the ECU slot.
+  const std::string densoNoise="Denso89663-26432 DENSO2005 Keihin37805 Me-b1G";
+  Bytes densoBytes(densoNoise.begin(),densoNoise.end());
+  assert(inferEcuFamily(densoBytes.data(),densoBytes.size()).empty());
+  const std::string realFamily="project DENSO EDC17CP02 hardware";
+  Bytes realFamilyBytes(realFamily.begin(),realFamily.end());
+  assert(inferEcuFamily(realFamilyBytes.data(),realFamilyBytes.size())==L"EDC17CP02");
   assert(identifyEcuManufacturer(L"Hella Automotive") == L"Hella");
   assert(identifyEcuManufacturer(L"Hyundai Kefico") == L"Hyundai Kefico");
   assert(softwareStemFromSourceFilename(L"C:\\\\ROMs\\\\ori_Alfa_1.4T_510422.bin") == L"ori_Alfa_1.4T_510422");
