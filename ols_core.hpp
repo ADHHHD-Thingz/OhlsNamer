@@ -1014,17 +1014,23 @@ struct Marker {
 inline std::vector<Marker> findMarkers(const uint8_t* d, size_t n, size_t scanLimit) {
   std::vector<Marker> out;
   const size_t boundedSize = std::min(n, scanLimit);
-  if (boundedSize < 9) return out;
-  int64_t limit = std::min<int64_t>((int64_t)boundedSize - 9, 8 * 1024 * 1024);
-  for (int64_t i = 0x40; i <= limit; i++) {
-    if (d[i] == 0x77 && d[i + 1] == 0x33 && d[i + 2] == 0x88 && d[i + 3] == 0x11) {
-      uint8_t compressed = d[i + 4];
-      uint32_t count = rd32(d, i + 5);
-      if (compressed > 1) continue;
-      if (count == 0 || count > 200000) continue;
-      out.push_back({(size_t)i + 9, compressed, count});
-      if (out.size() >= 8) break;
-    }
+  if (!d || boundedSize < 9 || boundedSize <= 0x40) return out;
+  const size_t limit = std::min(boundedSize - 9, (size_t)8 * 1024 * 1024);
+
+  // memchr is optimized by common C runtimes. Find the first marker byte
+  // quickly, then check the remaining bytes only at candidate positions.
+  size_t cursor = 0x40;
+  while (cursor <= limit) {
+    const void* hit = std::memchr(d + cursor, 0x77, limit - cursor + 1);
+    if (!hit) break;
+    const size_t i = static_cast<const uint8_t*>(hit) - d;
+    cursor = i + 1;
+    if (d[i + 1] != 0x33 || d[i + 2] != 0x88 || d[i + 3] != 0x11) continue;
+    const uint8_t compressed = d[i + 4];
+    const uint32_t count = rd32(d, i + 5);
+    if (compressed > 1 || count == 0 || count > 200000) continue;
+    out.push_back({i + 9, compressed, count});
+    if (out.size() >= 8) break;
   }
   return out;
 }
