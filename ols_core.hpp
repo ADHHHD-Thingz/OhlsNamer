@@ -1169,9 +1169,11 @@ inline Candidate scanMapDirectory(const uint8_t* d, size_t n, uint32_t version) 
       if (!nextFound) break;
     }
     if (candidate.maps.size() > best.maps.size()) best = std::move(candidate);
-    // Long sequences are strong evidence; avoid scanning thousands of offsets
-    // inside the same directory once it has been recovered.
-    if (best.maps.size() >= 1000) return best;
+    // A run of ten records, or three records including a human-named map,
+    // is strong evidence. Stop before scanning the same directory repeatedly.
+    if (best.maps.size() >= 10 ||
+        (best.maps.size() >= 3 && std::any_of(best.maps.begin(), best.maps.end(),
+          [](const MapRow& row) { return row.defined; }))) return best;
   }
   if (best.maps.size() >= 2 ||
       (best.maps.size() == 1 && best.maps.front().defined)) return best;
