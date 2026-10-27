@@ -1283,7 +1283,8 @@ inline Candidate extractMaps(const uint8_t* d, size_t n, uint32_t version,
 
   // Fallback for schema families/projects where no valid count marker could
   // be parsed, or the only marker candidate is a single unnamed placeholder.
-  Candidate scanned = scanMapDirectory(d, mapLimit, version);
+  const size_t fallbackLimit = haveVersionDirectory ? mapLimit : std::min<size_t>(mapLimit, 0x10000);
+  Candidate scanned = scanMapDirectory(d, fallbackLimit, version);
   if (!scanned.maps.empty() &&
       (!haveBest || scanned.maps.size() > best.maps.size())) {
     warnings.push_back(L"Map records recovered by bounded sequential scan; map count is heuristic.");
