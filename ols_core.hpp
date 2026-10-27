@@ -347,7 +347,6 @@ inline bool isPlaceholderLabel(const ws& raw) {
     }
     consumeToken();
     if (!meaningful) return true;
-    if (meaningful.empty()) return true;
   }
   if (std::regex_search(s, BITORDER) && s.size() < 48) return true;
   return false;
