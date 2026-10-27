@@ -288,6 +288,10 @@ inline bool isPlaceholderLabel(const ws& raw) {
   static const R DIM(L"\\d+\\s*[x\x00d7]\\s*\\d+");
   static const R ORDER(L"\\b(lohi|hilo|big[\\s-]?endian|little[\\s-]?endian)\\b", fl);
   static const R BITORDER(L"^\\d+\\s*-?\\s*bits?\\b[\\s,.-]*(lohi|hilo)\\b", fl);
+  // These expressions are used in the per-map hot path; cache them for large
+  // database scans rather than recompiling them for every technical label.
+  static const R MAPWORD(L"\\bmap\\b", fl);
+  static const R DIGITS(L"[0-9]+", fl);
 
   ws s = spaceNorm(jsTrim(removeNul(raw)));  // trim happens before normalising in JS; same result
   if (s.empty()) return true;
@@ -330,8 +334,8 @@ inline bool isPlaceholderLabel(const ws& raw) {
     residue = std::regex_replace(residue, BIT, L" ");
     residue = std::regex_replace(residue, DIM, L" ");
     residue = std::regex_replace(residue, ORDER, L" ");
-    residue = std::regex_replace(residue, std::wregex(L"\\bmap\\b", fl), L" ");
-    residue = std::regex_replace(residue, std::wregex(L"[0-9]+", fl), L" ");
+    residue = std::regex_replace(residue, MAPWORD, L" ");
+    residue = std::regex_replace(residue, DIGITS, L" ");
     ws lettersOnly;
     for (wchar_t c : residue) {
       const bool asciiLetter = c >= L'a' && c <= L'z';
