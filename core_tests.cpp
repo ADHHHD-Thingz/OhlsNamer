@@ -111,6 +111,36 @@ int main() {
   const ws softwareOnlyName = proposedFilename(L"Unknown", L"Unknown", L"Unknown", L"03G906016", 4);
   assert(softwareOnlyName.find(L"Unknown") == ws::npos);
   assert(softwareOnlyName.find(L"03G906016") == 0);
+  // Pre-330 map-prefix fast path must preserve the version-gated wire layout.
+  auto putCString = [](Bytes& bytes, size_t offset, const std::string& value) -> size_t {
+    const uint32_t length = static_cast<uint32_t>(value.size());
+    bytes[offset] = static_cast<uint8_t>(length);
+    bytes[offset + 1] = static_cast<uint8_t>(length >> 8);
+    bytes[offset + 2] = static_cast<uint8_t>(length >> 16);
+    bytes[offset + 3] = static_cast<uint8_t>(length >> 24);
+    if (!value.empty()) {
+      std::memcpy(bytes.data() + offset + 4, value.data(), value.size());
+      bytes[offset + 4 + value.size()] = 0;
+      return offset + 5 + value.size();
+    }
+    return offset + 4;
+  };
+  for (uint32_t schema : {80u, 92u, 93u, 199u, 200u, 267u, 268u, 281u, 282u, 286u, 287u, 329u}) {
+    Bytes prefixSample(256, 0);
+    const size_t start = 64;
+    size_t p = start;
+    if (schema >= 268) p += 1;
+    if (schema >= 282) p += 4;
+    if (schema >= 287) p = putCString(prefixSample, p, "prefix");
+    if (schema >= 93) p += 1;
+    const size_t descriptionEnd = putCString(prefixSample, p, "");
+    const size_t nameStart = descriptionEnd + 24; // five map words + folder ID
+    putCString(prefixSample, nameStart, "LDRXN");
+    assert(plausibleMapPrefix(prefixSample.data(), prefixSample.size(), start, schema));
+  }
+  Bytes emptyPrefixSample(256, 0);
+  assert(!plausibleMapPrefix(emptyPrefixSample.data(), emptyPrefixSample.size(), 64, 200));
+
   // M1 version-array dispatch: validate count/start/record-size before using
   // the ROM-array boundary, and ignore M2-like markers inside the ROM bytes.
   Bytes versioned(256, 0);
