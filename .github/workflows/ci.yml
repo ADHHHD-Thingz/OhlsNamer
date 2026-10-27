@@ -29,6 +29,8 @@ jobs:
           MAP_AUDIT=1 ./core_cli "${files[@]}" > olstest-map-audit.txt
           test "$(grep -c '^  map-audit total=' olstest-map-audit.txt)" -eq "${#files[@]}"
           test "$(grep -c '^  map-record index=' olstest-map-audit.txt)" -gt 0
+          echo "=== Honda Civic SH7058 map listing ==="
+          awk '/Honda Civic SH7058 \\(76\\)\\.ols/{show=1} show{print} show && /^  proposed=/{exit}' olstest-map-audit.txt
       - name: Run regression tests with address and undefined-behavior sanitizers
         run: g++ -std=c++17 -Wall -Wextra -Wpedantic -fsanitize=address,undefined -fno-omit-frame-pointer core_tests.cpp -lz -o core_tests_sanitized && ASAN_OPTIONS=detect_leaks=1 ./core_tests_sanitized
       - name: Compile independent OLS reference parser
