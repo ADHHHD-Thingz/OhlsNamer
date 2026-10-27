@@ -92,7 +92,7 @@ int main() {
   }
   // Genuine map names remain countable even when they mention a supplier.
   for (const ws& humanName : {
-  assert(isDefinedMap(L"", L"Kennfeld \"Denso injection quantity limiter\""));
+  assert(isDefinedMap(L"", L"Kennfeld Denso injection quantity limiter"));
            ws(L"Bosch map torque limiter"),
            ws(L"Siemens rail pressure target"), ws(L"Continental boost pressure limit"),
            ws(L"Torque limiter"), ws(L"Driver wish"), ws(L"KFZWOP"), ws(L"LDRXN"),
