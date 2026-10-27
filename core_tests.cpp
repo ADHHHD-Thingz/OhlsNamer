@@ -64,6 +64,11 @@ int main() {
   assert(isDefinedMap(L"Bosch torque limiter 16 bit. 16 x 16", L""));
   assert(isDefinedMap(L"Torque limiter 16 bit 16x16", L""));
   assert(!isDefinedMap(L"Bosch map", L""));
+  assert(!isDefinedMap(L"0000002b", L""));
+  assert(!isDefinedMap(L"0000371f", L""));
+  assert(!isDefinedMap(L"0x10", L""));
+  assert(isDefinedMap(L"ABICLOSV", L""));
+  assert(isDefinedMap(L"AADPD_ON", L""));
   assert(!isDefinedMap(L"Denso Map", L""));
   assert(!isDefinedMap(L"Siemens map 2", L""));
   assert(!isDefinedMap(L"Bosch map", L"Fuel / 16 x 16 / 16 bit"));
