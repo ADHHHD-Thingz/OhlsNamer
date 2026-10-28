@@ -740,6 +740,19 @@ inline void renameArchives(Scan& sc, const ArchiveRenameSettings& settings) {
                     ws(settings.allowRewrite ? L"not enough free space" : L"rewrites are switched off") + L")";
       }
     }
+    if (res.ok) {
+      // Names (and for a rewrite, offsets) changed: re-read the headers so later
+      // extraction, renames and rescans work on the archive as it is now.
+      olsarc::ArchiveListing fresh;
+      std::vector<size_t> map;
+      ws err;
+      if (olsarc::refreshListing(ops, arc.path, arc.listing, fresh, map, err)) {
+        for (auto& it : sc.items)
+          if (it.archive == entry.first && it.project < map.size() && map[it.project] != (size_t)-1)
+            it.project = map[it.project];
+        arc.listing = std::move(fresh);
+      }
+    }
     if (!sc.journalPath.empty()) {
       for (size_t i : entry.second) {
         const Item& it = sc.items[i];

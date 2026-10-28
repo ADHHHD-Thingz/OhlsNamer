@@ -274,8 +274,38 @@ int main() {
     results.clear();
     extractProjects(ops, archive, listing, {{0, outBad}}, [&](ExtractResult&& r) { results.push_back(std::move(r)); }, nullptr, err);
     assert(results.size() == 1 && !results[0].ok && !ops.exists(outBad) && !ops.exists(partPath(outBad)));
-    for (const ws& f : {archive, outA, outB}) ops.remove(f);
+    // Regression (1.5.2): extracting with the scan's listing after the archive
+    // was renamed by a full rewrite (names and offsets changed) must still work.
+    const std::string body2(4000, 'Q');
+    assert(ops.writeDurable(archive, makeZip({{"x.ols", "first"}, {"sub/y.ols", body2}})));
+    ArchiveListing stale;
+    {
+      auto s2 = ops.openRead(archive);
+      assert(listArchive(*s2, ArchiveKind::Zip, stale, err) && stale.projects.size() == 2);
+    }
+    ArchiveRenameOptions ro;
+    ro.allowInPlace = false;  // force the copy rewrite: every offset moves
+    assert(renameInArchive(ops, archive, stale, {{0, "a much longer new name for x.ols"}, {1, "renamed y.ols"}}, ro, nullptr).ok);
+    const ws outX = fromUtf8(dir + "/x2.ols"), outY = fromUtf8(dir + "/y2.ols");
+    results.clear();
+    assert(extractProjects(ops, archive, stale, {{0, outX}, {1, outY}},
+                           [&](ExtractResult&& r) { results.push_back(std::move(r)); }, nullptr, err));
+    assert(results.size() == 2 && results[0].ok && results[1].ok);
+    assert(ops.readAll(outX, got) && std::string(got.begin(), got.end()) == "first");
+    assert(ops.readAll(outY, got) && std::string(got.begin(), got.end()) == body2);
+    // An entry whose size no longer matches is reported, not extracted.
+    stale.projects[1].size += 1;
+    results.clear();
+    extractProjects(ops, archive, stale, {{1, fromUtf8(dir + "/z.ols")}}, [&](ExtractResult&& r) { results.push_back(std::move(r)); }, nullptr, err);
+    assert(results.size() == 1 && !results[0].ok && !ops.exists(fromUtf8(dir + "/z.ols")));
+    for (const ws& f : {archive, outA, outB, outX, outY}) ops.remove(f);
     ::rmdir(dir.c_str());
   }
+  // UnRAR vs header-parser name matching.
+  assert(sameEntryName("a\\b.ols", "a/b.ols"));
+  assert(sameEntryName("bin/2to3;1", "bin/2to3"));
+  assert(!sameEntryName("bin/2to3;x", "bin/2to3"));
+  assert(!sameEntryName("other.ols", "b.ols"));
+  assert(sameEntryName("caf\xc3\xa9.ols", "caf\xe2\x95\x9a.ols"));  // OEM code-page ambiguity
   std::cout << "archive unit checks passed\n";
 }

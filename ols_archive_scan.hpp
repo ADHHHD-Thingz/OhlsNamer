@@ -38,6 +38,24 @@ inline std::string slashNormalized(std::string s) {
   return s;
 }
 
+// UnRAR's name for an entry against the header parser's name for the same
+// position (sizes are compared separately). Two legitimate differences:
+// RAR5 file versions (WinRAR -ver) get ";N" appended by UnRAR, and legacy
+// RAR4 names without the Unicode flag are decoded with the OEM code page,
+// which differs between systems for non-ASCII bytes.
+inline bool sameEntryName(const std::string& unrarName, const std::string& parserName) {
+  const std::string a = slashNormalized(unrarName), b = slashNormalized(parserName);
+  if (a == b) return true;
+  if (a.size() > b.size() + 1 && a.compare(0, b.size(), b) == 0 && a[b.size()] == ';' &&
+      a.find_first_not_of("0123456789", b.size() + 1) == std::string::npos)
+    return true;
+  auto ascii = [](const std::string& s) {
+    for (unsigned char c : s) if (c >= 0x80) return false;
+    return true;
+  };
+  return !(ascii(a) && ascii(b));  // encoding ambiguity: position and size decide
+}
+
 // RAR: one sequential pass through the archive (solid archives must be decoded
 // in order). Results are delivered per project through `done`.
 inline bool analyzeRarProjects(const ws& archivePath, const ArchiveListing& listing,
@@ -53,7 +71,7 @@ inline bool analyzeRarProjects(const ws& archivePath, const ArchiveListing& list
     auto it = byFile.find(e.index);
     if (it == byFile.end()) return false;
     const ArchiveProject& p = listing.projects[it->second];
-    if (slashNormalized(e.nameUtf8) != slashNormalized(p.innerPath) || e.unpackedSize != p.size) {
+    if (!sameEntryName(e.nameUtf8, p.innerPath) || e.unpackedSize != p.size) {
       mismatch = true;
       return false;
     }
@@ -100,7 +118,9 @@ inline bool analyzeRarProjects(const ws& archivePath, const ArchiveListing& list
     ProjectAnalysis r;
     r.project = i;
     r.error = listing.projects[i].encrypted ? ws(L"Encrypted entry: contents cannot be analysed without the password.")
-                                            : (ok ? ws(L"Entry was not decoded.") : error);
+              : !ok                                   ? error
+              : listing.projects[i].size > (1ull << 30) ? ws(L"Project is larger than 1 GB.")
+                                                      : ws(L"UnRAR did not return this entry.");
     done(std::move(r));
   }
   return ok;
@@ -170,10 +190,73 @@ struct ExtractResult {
 
 inline ws partPath(const ws& target) { return target + L".olsrenamer-part"; }
 
+// Re-reads the archive headers and maps each project of `old` (a listing from
+// an earlier scan) to the same entry in the archive as it is now. Entry order
+// is preserved by every rename path, so the match is by entry position plus
+// uncompressed size; names and offsets may have changed (renamed or
+// rewritten since the scan). projectMap[oldProject] = new project or npos.
+inline bool refreshListing(ArchiveFileOps& ops, const ws& archivePath, const ArchiveListing& old,
+                           ArchiveListing& fresh, std::vector<size_t>& projectMap, ws& error) {
+  auto src = ops.openRead(archivePath);
+  if (!src) { error = L"Cannot open the archive."; return false; }
+  fresh = ArchiveListing();
+  if (!listArchive(*src, old.kind, fresh, error)) return false;
+  std::map<size_t, size_t> byEntry;
+  for (size_t i = 0; i < fresh.projects.size(); ++i) byEntry[fresh.projects[i].index] = i;
+  projectMap.assign(old.projects.size(), (size_t)-1);
+  for (size_t i = 0; i < old.projects.size(); ++i) {
+    auto f = byEntry.find(old.projects[i].index);
+    if (f != byEntry.end() && fresh.projects[f->second].size == old.projects[i].size) projectMap[i] = f->second;
+  }
+  return true;
+}
+
+inline bool extractProjectsCurrent(ArchiveFileOps& ops, const ws& archivePath, const ArchiveListing& listing,
+                                   const std::vector<ExtractRequest>& requests,
+                                   const std::function<void(ExtractResult&&)>& done,
+                                   const std::function<bool(uint64_t bytesWritten)>& keepGoing, ws& error);
+
+// `listing` may be stale (from the scan); the archive is re-listed first.
+// Results report project indices of `listing`.
 inline bool extractProjects(ArchiveFileOps& ops, const ws& archivePath, const ArchiveListing& listing,
                             const std::vector<ExtractRequest>& requests,
                             const std::function<void(ExtractResult&&)>& done,
                             const std::function<bool(uint64_t bytesWritten)>& keepGoing, ws& error) {
+  ArchiveListing fresh;
+  std::vector<size_t> map;
+  if (!refreshListing(ops, archivePath, listing, fresh, map, error)) {
+    for (const auto& rq : requests) {
+      ExtractResult r;
+      r.project = rq.project;
+      r.error = L"Cannot read the archive: " + error;
+      done(std::move(r));
+    }
+    return false;
+  }
+  std::vector<ExtractRequest> mapped;
+  std::map<size_t, size_t> back;  // new project -> old project
+  for (const auto& rq : requests) {
+    if (rq.project < map.size() && map[rq.project] != (size_t)-1) {
+      mapped.push_back({map[rq.project], rq.target});
+      back[map[rq.project]] = rq.project;
+    } else {
+      ExtractResult r;
+      r.project = rq.project;
+      r.error = L"The archive changed since the scan and this entry is no longer there; rescan.";
+      done(std::move(r));
+    }
+  }
+  if (mapped.empty()) return true;
+  return extractProjectsCurrent(ops, archivePath, fresh, mapped, [&](ExtractResult&& r) {
+    r.project = back[r.project];
+    done(std::move(r));
+  }, keepGoing, error);
+}
+
+inline bool extractProjectsCurrent(ArchiveFileOps& ops, const ws& archivePath, const ArchiveListing& listing,
+                                   const std::vector<ExtractRequest>& requests,
+                                   const std::function<void(ExtractResult&&)>& done,
+                                   const std::function<bool(uint64_t bytesWritten)>& keepGoing, ws& error) {
   uint64_t written = 0;
   auto finishFile = [&](std::unique_ptr<ArchiveFileOps::WriteFile>& out, const ExtractRequest& rq, bool decodedOk,
                         const ws& why, uint64_t bytes) {
@@ -232,12 +315,13 @@ inline bool extractProjects(ArchiveFileOps& ops, const ws& archivePath, const Ar
   std::map<size_t, uint64_t> sizes;
   std::map<size_t, bool> writeFailed;
   std::set<size_t> reported;
+  std::map<size_t, std::string> otherName;  // entry index -> name UnRAR reported instead
   olsunrar::Callbacks cb;
   cb.want = [&](const olsunrar::EntryInfo& e) {
     auto it = byFile.find(e.index);
     if (it == byFile.end()) return false;
     const ArchiveProject& p = listing.projects[it->second->project];
-    if (slashNormalized(e.nameUtf8) != slashNormalized(p.innerPath)) return false;
+    if (!sameEntryName(e.nameUtf8, p.innerPath) || e.unpackedSize != p.size) { otherName[e.index] = e.nameUtf8; return false; }
     open[e.index] = ops.create(partPath(it->second->target));
     sizes[e.index] = 0;
     writeFailed[e.index] = !open[e.index];
@@ -268,8 +352,11 @@ inline bool extractProjects(ArchiveFileOps& ops, const ws& archivePath, const Ar
     if (reported.count(rq.first)) continue;
     ExtractResult r;
     r.project = rq.second->project;
+    auto other = otherName.find(rq.first);
     r.error = listing.projects[rq.second->project].encrypted ? ws(L"Encrypted entry: password required.")
-                                                             : (ok ? ws(L"Entry was not decoded.") : error);
+              : !ok                    ? error
+              : other != otherName.end() ? L"UnRAR reports a different entry at this position (\"" + fromUtf8(other->second) + L"\"); rescan."
+                                       : ws(L"UnRAR did not return this entry (" + fromUtf8(listing.projects[rq.second->project].innerPath) + L").");
     done(std::move(r));
   }
   return ok;

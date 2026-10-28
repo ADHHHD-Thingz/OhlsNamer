@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.3
+
+- **Fixed: extracting from a RAR (or rewritten ZIP) after renaming inside it.** The scan's archive listing was not refreshed after an in-archive rename. Extraction then asked UnRAR for the old entry names and every renamed RAR project failed with "Entry was not decoded"; a rewritten ZIP failed with "Missing local file header". Extraction now re-reads the archive headers itself and matches each project by entry position and size, and a rename refreshes the stored listing.
+- **More robust RAR entry matching:** RAR5 file versions (WinRAR `-ver`, which UnRAR reports as `name;1`) and legacy RAR4 names in a different OEM code page no longer cause a mismatch. A remaining mismatch now gives a specific message instead of "Entry was not decoded".
+- Verified: under Wine, scan → rename inside archives → extract on RAR5, solid RAR5, RAR5 with recovery record and ZIP, 108 rows, all byte-identical (1.5.2: 83 of 108 failed). Regression unit tests added.
+
 ## 1.5.2
 
 - **Move, copy and extract selected rows.** The list now supports multiple selection: Ctrl/Shift-click, or Ctrl+A to select all. Use **Move / extract selected...** or the right-click menu.
