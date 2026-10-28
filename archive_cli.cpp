@@ -3,6 +3,7 @@
 //   archive_cli rename ARCHIVE... [--copy|--no-rewrite]  in place (ZIP, names that fit) or rewrite
 //   archive_cli testrename ARCHIVE [--shorter|--unicode] [--copy|--no-rewrite]
 //                                           writer self-test: renames EVERY file entry
+//   archive_cli extract ARCHIVE DESTDIR      writes every project out (archive unchanged)
 // Build: see build_archive_cli.sh
 #include <chrono>
 #include <cstdio>
@@ -48,6 +49,46 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--unicode")) unicode = true;
     else if (!std::strcmp(argv[i], "--no-rewrite")) noRewrite = true;
     else paths.push_back(argv[i]);
+  }
+  if (cmd == "extract") {
+    if (paths.size() != 2) { fprintf(stderr, "usage: archive_cli extract ARCHIVE DESTDIR\n"); return 2; }
+    const ws path = fromUtf8(paths[0]);
+    std::string dest = paths[1];
+    if (!dest.empty() && dest.back() != '/') dest += '/';
+    PosixFileOps ops;
+    auto src = ops.openRead(path);
+    ArchiveListing listing;
+    ws err;
+    if (!src || !listArchive(*src, archiveKindForName(path), listing, err)) {
+      printf("error: %s\n", toUtf8(err).c_str());
+      return 1;
+    }
+    src.reset();
+    std::vector<ExtractRequest> requests;
+    std::set<ws> taken;
+    for (size_t i = 0; i < listing.projects.size(); ++i) {
+      std::string folder, base;
+      splitInnerPath(slashNormalized(listing.projects[i].innerPath), folder, base);
+      ws name = fromUtf8(base);
+      // Free name: existing files and earlier picks in this batch.
+      ws candidate = name;
+      int n = 2;
+      while (taken.count(ols::lower(candidate)) || ops.exists(fromUtf8(dest) + candidate)) {
+        const size_t dot = name.find_last_of(L'.');
+        candidate = (dot == ws::npos ? name : name.substr(0, dot)) + L" " + std::to_wstring(n++) +
+                    (dot == ws::npos ? ws() : name.substr(dot));
+      }
+      taken.insert(ols::lower(candidate));
+      requests.push_back({i, fromUtf8(dest) + candidate});
+    }
+    int bad = 0;
+    const bool ok = extractProjects(ops, path, listing, requests, [&](ExtractResult&& r) {
+      printf("  %s %s -> %s %s\n", r.ok ? "ok    " : "FAILED", listing.projects[r.project].innerPath.c_str(),
+             toUtf8(requests[r.project].target).c_str(), toUtf8(r.error).c_str());
+      if (!r.ok) ++bad;
+    }, nullptr, err);
+    if (!ok) { printf("error: %s\n", toUtf8(err).c_str()); ++bad; }
+    return bad ? 1 : 0;
   }
   if (cmd == "testrename") {
     // Renames every file entry regardless of content: exercises the writers on

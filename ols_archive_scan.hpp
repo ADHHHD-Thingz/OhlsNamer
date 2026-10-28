@@ -151,4 +151,128 @@ inline ArchiveNamePlan planArchiveRenames(const ArchiveListing& listing, const s
   return plan;
 }
 
+// --------------------------------------------------------------- extraction
+// Writes selected projects out of an archive to their own files. Each project
+// is decoded straight into "<target>.olsrenamer-part", checked (ZIP: size and
+// CRC-32; RAR: UnRAR's CRC/BLAKE2 check), flushed and only then renamed to
+// the target, which is never overwritten. The archive itself is not modified.
+struct ExtractRequest {
+  size_t project = 0;  // index into ArchiveListing::projects
+  ws target;           // full destination path (caller picks a free name)
+};
+
+struct ExtractResult {
+  size_t project = 0;
+  bool ok = false;
+  ws error;
+  uint64_t bytes = 0;
+};
+
+inline ws partPath(const ws& target) { return target + L".olsrenamer-part"; }
+
+inline bool extractProjects(ArchiveFileOps& ops, const ws& archivePath, const ArchiveListing& listing,
+                            const std::vector<ExtractRequest>& requests,
+                            const std::function<void(ExtractResult&&)>& done,
+                            const std::function<bool(uint64_t bytesWritten)>& keepGoing, ws& error) {
+  uint64_t written = 0;
+  auto finishFile = [&](std::unique_ptr<ArchiveFileOps::WriteFile>& out, const ExtractRequest& rq, bool decodedOk,
+                        const ws& why, uint64_t bytes) {
+    ExtractResult r;
+    r.project = rq.project;
+    r.bytes = bytes;
+    bool ok = decodedOk && out && bytes == listing.projects[rq.project].size && out->flush();
+    out.reset();
+    if (ok && !ops.renameNoReplace(partPath(rq.target), rq.target)) {
+      ok = false;
+      r.error = L"A file with that name appeared in the destination; nothing was overwritten.";
+    } else if (!ok) {
+      r.error = !why.empty() ? why : (decodedOk ? ws(L"Write error (disk full?).") : ws(L"Decoding failed."));
+    }
+    if (!ok) ops.remove(partPath(rq.target));
+    r.ok = ok;
+    done(std::move(r));
+  };
+
+  if (listing.kind == ArchiveKind::Zip) {
+    auto src = ops.openRead(archivePath);
+    if (!src) { error = L"Cannot open the archive."; return false; }
+    for (const auto& rq : requests) {
+      if (rq.project >= listing.projects.size()) continue;
+      const ZipEntry& en = listing.zip.entries[listing.projects[rq.project].index];
+      auto out = ops.create(partPath(rq.target));
+      if (!out) {
+        ExtractResult r;
+        r.project = rq.project;
+        r.error = L"Cannot create the destination file.";
+        done(std::move(r));
+        continue;
+      }
+      uint64_t bytes = 0;
+      bool writeOk = true, cancelled = false;
+      ws why;
+      const bool decoded = decodeZipEntry(*src, en, [&](const uint8_t* p, size_t n) {
+        if (!out->write(p, n)) { writeOk = false; return false; }
+        bytes += n;
+        written += n;
+        if (keepGoing && !keepGoing(written)) { cancelled = true; return false; }
+        return true;
+      }, why);
+      if (!writeOk) why = L"Write error (disk full?).";
+      finishFile(out, rq, decoded && writeOk, why, bytes);
+      if (cancelled) { error = L"Cancelled."; return false; }
+    }
+    return true;
+  }
+
+  // RAR: one sequential pass; each wanted entry streams into its own file.
+  std::map<size_t, const ExtractRequest*> byFile;
+  for (const auto& rq : requests)
+    if (rq.project < listing.projects.size()) byFile[listing.projects[rq.project].index] = &rq;
+  std::map<size_t, std::unique_ptr<ArchiveFileOps::WriteFile>> open;
+  std::map<size_t, uint64_t> sizes;
+  std::map<size_t, bool> writeFailed;
+  std::set<size_t> reported;
+  olsunrar::Callbacks cb;
+  cb.want = [&](const olsunrar::EntryInfo& e) {
+    auto it = byFile.find(e.index);
+    if (it == byFile.end()) return false;
+    const ArchiveProject& p = listing.projects[it->second->project];
+    if (slashNormalized(e.nameUtf8) != slashNormalized(p.innerPath)) return false;
+    open[e.index] = ops.create(partPath(it->second->target));
+    sizes[e.index] = 0;
+    writeFailed[e.index] = !open[e.index];
+    return true;
+  };
+  cb.data = [&](size_t index, const uint8_t* p, size_t n) {
+    auto it = open.find(index);
+    if (it == open.end() || !it->second || writeFailed[index]) return true;
+    if (!it->second->write(p, n)) { writeFailed[index] = true; return true; }
+    sizes[index] += n;
+    written += n;
+    return !(keepGoing && !keepGoing(written));
+  };
+  cb.finished = [&](size_t index, bool ok, const ws& why) {
+    auto rq = byFile.find(index);
+    if (rq == byFile.end()) return;
+    finishFile(open[index], *rq->second, ok && !writeFailed[index],
+               writeFailed[index] ? ws(L"Cannot write the destination file.") : why, sizes[index]);
+    reported.insert(index);
+    open.erase(index);
+  };
+  const bool ok = olsunrar::streamEntries(archivePath, cb, error);
+  for (auto& o : open) {  // cancelled or aborted mid-entry
+    o.second.reset();
+    ops.remove(partPath(byFile[o.first]->target));
+  }
+  for (const auto& rq : byFile) {
+    if (reported.count(rq.first)) continue;
+    ExtractResult r;
+    r.project = rq.second->project;
+    r.error = listing.projects[rq.second->project].encrypted ? ws(L"Encrypted entry: password required.")
+                                                             : (ok ? ws(L"Entry was not decoded.") : error);
+    done(std::move(r));
+  }
+  return ok;
+}
+
 }  // namespace olsarc

@@ -10,6 +10,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${1:-$(mktemp -d)}
 CLI="$ROOT/archive_cli"
 CORE="$ROOT/core_cli"
+[ -x "$CLI" ] && [ -x "$CORE" ] || { echo "build archive_cli and core_cli first"; exit 1; }
 fails=0
 fail() { echo "FAIL: $*"; fails=$((fails + 1)); }
 
@@ -136,6 +137,24 @@ grep -q "Encrypted entry" enc.scan && echo "ok   rar5_encdata.rar entries report
 "$CLI" scan rar5_enchead.rar > enchead.scan 2>&1
 grep -q "encrypted" enchead.scan && echo "ok   rar5_enchead.rar refused (headers encrypted)" || fail "encrypted headers not reported"
 fi
+
+# Extraction of projects out of every archive (archives stay unchanged).
+grep '\.ols$' "$WORK/orig.sha" | awk '{print $1}' | sort > "$WORK/ols.sha"
+for a in deflate.zip stored.zip sevenzip.zip zip64.zip descriptor.zip rar5.rar rar5_solid.rar rar5_rr_qo.rar; do
+  [ -f "$a" ] || continue
+  before=$(sha256sum "$a" | cut -d' ' -f1)
+  out="$WORK/extract_$a"; rm -rf "$out"; mkdir -p "$out"
+  "$CLI" extract "$a" "$out" > "$out.log" 2>&1 || { fail "extract $a"; tail -3 "$out.log"; continue; }
+  (cd "$out" && sha256sum -- *.ols | awk '{print $1}' | sort) > "$out.sha"
+  diff -q "$out.sha" "$WORK/ols.sha" >/dev/null || fail "extract $a: contents differ from originals"
+  [ "$(sha256sum "$a" | cut -d' ' -f1)" = "$before" ] || fail "extract $a modified the archive"
+  ls "$out" | grep -q 'olsrenamer-part' && fail "extract $a left partial files"
+  # Extracting again into the same folder must not overwrite anything.
+  first=$(cd "$out" && sha256sum -- *.ols | sort | sha256sum)
+  "$CLI" extract "$a" "$out" > "$out.log2" 2>&1 || fail "second extract $a"
+  [ "$(ls "$out" | wc -l)" -eq $((2 * $(wc -l < "$WORK/ols.sha"))) ] || fail "second extract $a: expected numbered copies"
+  echo "ok   extract $a ($(wc -l < "$out.sha") projects byte-identical; archive unchanged; no overwrite on re-extract)"
+done
 
 echo "work dir: $WORK"
 [ $fails -eq 0 ] && echo "ARCHIVE INTEGRATION PASSED" || echo "ARCHIVE INTEGRATION FAILED ($fails)"

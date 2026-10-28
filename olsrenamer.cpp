@@ -18,7 +18,8 @@ using ols::ws;
 
 enum {
   ID_FOLDER = 101, ID_BROWSE, ID_SUB, ID_SCAN, ID_RENAME, ID_CANCEL, ID_LIST, ID_STATUS, ID_PROGRESS, ID_FILTER, ID_CHANGES, ID_SAVELOG,
-  ID_ARCHIVES, ID_REWRITE
+  ID_ARCHIVES, ID_REWRITE, ID_TRANSFER,
+  IDM_MOVE = 300, IDM_COPY, IDM_USENEW, IDM_SELECTALL
 };
 enum {
   WM_SCAN_FOUND = WM_APP + 1,   // wParam = files found so far
@@ -26,12 +27,15 @@ enum {
   WM_SCAN_DONE,
   WM_RENAME_PROGRESS,           // wParam = done, lParam = total
   WM_RENAME_DONE,
-  WM_ARCHIVE_PROGRESS           // wParam = per-mille of the current archive, lParam = archive index
+  WM_ARCHIVE_PROGRESS,          // wParam = per-mille of the current archive, lParam = archive index
+  WM_TRANSFER_PROGRESS,         // wParam = done, lParam = total
+  WM_TRANSFER_DONE
 };
 
 struct App {
   HWND hwnd = nullptr, edFolder, btnBrowse, chkSub, btnScan, btnRename, btnCancel, lblFolder, progress,
-       status, list, edFilter, chkChanges, chkSaveLog = nullptr, chkArchives = nullptr, chkRewrite = nullptr;
+       status, list, edFilter, chkChanges, chkSaveLog = nullptr, chkArchives = nullptr, chkRewrite = nullptr,
+       btnTransfer = nullptr;
   HFONT font = nullptr;
   int dpi = 96;
   std::vector<ws> recentDirs;
@@ -46,6 +50,10 @@ struct App {
   std::atomic<size_t> archivesDone{0}, archivesTotal{0};
   int sortColumn = 0;          // 0 File, 1 New name, 2 Maps, 3 Status
   bool sortDescending = false;
+  bool useNewNames = false;    // move/extract with the planned new names
+  olsfs::TransferSummary lastTransfer;
+  olsfs::TransferMode lastMode = olsfs::TransferMode::Move;
+  ws lastTransferDir;
 } app;
 
 static int S(int v) { return MulDiv(v, app.dpi, 96); }
@@ -100,6 +108,11 @@ static void loadSettings() {
     SendMessageW(app.chkSaveLog, BM_SETCHECK, saveLogs ? BST_CHECKED : BST_UNCHECKED, 0);
   DWORD sortValue = 0;
   bytes = sizeof(DWORD);
+  if (RegQueryValueExW(key, L"TransferUseNewNames", nullptr, &type, reinterpret_cast<BYTE*>(&sortValue), &bytes) == ERROR_SUCCESS &&
+      type == REG_DWORD)
+    app.useNewNames = sortValue != 0;
+  readRegString(key, L"LastTransferDirectory", app.lastTransferDir);
+  bytes = sizeof(DWORD);
   if (RegQueryValueExW(key, L"SortColumn", nullptr, &type, reinterpret_cast<BYTE*>(&sortValue), &bytes) == ERROR_SUCCESS &&
       type == REG_DWORD && sortValue <= 3)
     app.sortColumn = (int)sortValue;
@@ -130,6 +143,11 @@ static void saveSettings() {
   DWORD recursive = SendMessageW(app.chkSub, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1u : 0u;
   RegSetValueExW(key, L"IncludeSubfolders", 0, REG_DWORD,
                  reinterpret_cast<const BYTE*>(&recursive), sizeof(recursive));
+  const DWORD useNewNames = app.useNewNames ? 1u : 0u;
+  RegSetValueExW(key, L"TransferUseNewNames", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&useNewNames), sizeof(useNewNames));
+  if (!app.lastTransferDir.empty())
+    RegSetValueExW(key, L"LastTransferDirectory", 0, REG_SZ, reinterpret_cast<const BYTE*>(app.lastTransferDir.c_str()),
+                   static_cast<DWORD>((app.lastTransferDir.size() + 1) * sizeof(wchar_t)));
   const DWORD sortColumn = (DWORD)app.sortColumn, sortDescending = app.sortDescending ? 1u : 0u;
   RegSetValueExW(key, L"SortColumn", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&sortColumn), sizeof(sortColumn));
   RegSetValueExW(key, L"SortDescending", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&sortDescending), sizeof(sortDescending));
@@ -196,6 +214,8 @@ static void updateButtons() {
   EnableWindow(app.chkSub, !b);
   if (app.chkSaveLog) EnableWindow(app.chkSaveLog, !b);
   if (app.chkArchives) EnableWindow(app.chkArchives, !b);
+  if (app.btnTransfer)
+    EnableWindow(app.btnTransfer, !b && app.scanned && ListView_GetSelectedCount(app.list) > 0);
   if (app.chkRewrite) EnableWindow(app.chkRewrite, !b);
   EnableWindow(app.btnRename, !b && app.scanned && olsfs::renameCount(app.scan) > 0);
   // During renaming, Cancel stops archive rewrites (plain renames are instant).
@@ -225,6 +245,7 @@ static void layout() {
   y += rowH;
   MoveWindow(app.chkArchives, m, y + S(3), S(250), rowH - S(4), TRUE);
   MoveWindow(app.chkRewrite, m + S(258), y + S(3), S(330), rowH - S(4), TRUE);
+  MoveWindow(app.btnTransfer, W - m - S(170), y, S(170), rowH, TRUE);
   y += rowH + gap + S(2);
   MoveWindow(app.progress, m, y, W - 2 * m, S(18), TRUE);
   y += S(18) + S(4);
@@ -298,10 +319,17 @@ static void updateSortArrows() {
 }
 
 static void refreshList() {
-  // Keep the selected project selected (and visible) across filtering and sorting.
-  size_t selectedItem = SIZE_MAX;
-  const int selectedRow = app.list ? ListView_GetNextItem(app.list, -1, LVNI_SELECTED) : -1;
-  if (selectedRow >= 0 && (size_t)selectedRow < app.visibleItems.size()) selectedItem = app.visibleItems[(size_t)selectedRow];
+  // Keep the selected projects selected (and the focused one visible) across
+  // filtering and sorting.
+  std::set<size_t> selectedItems;
+  size_t focusedItem = SIZE_MAX;
+  if (app.list) {
+    for (int row = ListView_GetNextItem(app.list, -1, LVNI_SELECTED); row >= 0;
+         row = ListView_GetNextItem(app.list, row, LVNI_SELECTED))
+      if ((size_t)row < app.visibleItems.size()) selectedItems.insert(app.visibleItems[(size_t)row]);
+    const int focused = ListView_GetNextItem(app.list, -1, LVNI_FOCUSED);
+    if (focused >= 0 && (size_t)focused < app.visibleItems.size()) focusedItem = app.visibleItems[(size_t)focused];
+  }
   app.visibleItems.clear();
   wchar_t filterBuf[1024] = {};
   if (app.edFilter) GetWindowTextW(app.edFilter, filterBuf, 1024);
@@ -324,12 +352,12 @@ static void refreshList() {
       app.visibleItems.size(), static_cast<size_t>(INT_MAX))),
       LVSICF_NOINVALIDATEALL | LVSICF_NOSCROLL);
   ListView_SetItemState(app.list, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
-  if (selectedItem != SIZE_MAX) {
-    auto found = std::find(app.visibleItems.begin(), app.visibleItems.end(), selectedItem);
-    if (found != app.visibleItems.end()) {
-      const int row = (int)(found - app.visibleItems.begin());
-      ListView_SetItemState(app.list, row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-      ListView_EnsureVisible(app.list, row, FALSE);
+  for (size_t row = 0; row < app.visibleItems.size() && !selectedItems.empty(); ++row) {
+    const size_t item = app.visibleItems[row];
+    if (selectedItems.count(item)) ListView_SetItemState(app.list, (int)row, LVIS_SELECTED, LVIS_SELECTED);
+    if (item == focusedItem) {
+      ListView_SetItemState(app.list, (int)row, LVIS_FOCUSED, LVIS_FOCUSED);
+      ListView_EnsureVisible(app.list, (int)row, FALSE);
     }
   }
   updateSortArrows();
@@ -457,6 +485,97 @@ static void startRename() {
   });
 }
 
+// ------------------------------------------------------ move / copy / extract
+static std::vector<size_t> selectedItemIndices() {
+  std::vector<size_t> out;
+  for (int row = ListView_GetNextItem(app.list, -1, LVNI_SELECTED); row >= 0;
+       row = ListView_GetNextItem(app.list, row, LVNI_SELECTED))
+    if ((size_t)row < app.visibleItems.size()) out.push_back(app.visibleItems[(size_t)row]);
+  return out;
+}
+
+static int CALLBACK browseInit(HWND h, UINT msg, LPARAM, LPARAM data) {
+  if (msg == BFFM_INITIALIZED && data) SendMessageW(h, BFFM_SETSELECTIONW, TRUE, data);
+  return 0;
+}
+
+static ws pickFolder(const wchar_t* title, const ws& start) {
+  BROWSEINFOW bi = {};
+  bi.hwndOwner = app.hwnd;
+  bi.lpszTitle = title;
+  bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_EDITBOX;
+  bi.lpfn = browseInit;
+  bi.lParam = (LPARAM)(start.empty() ? nullptr : start.c_str());
+  LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+  if (!pidl) return ws();
+  wchar_t path[MAX_PATH * 2];
+  ws out = SHGetPathFromIDListW(pidl, path) ? ws(path) : ws();
+  CoTaskMemFree(pidl);
+  return out;
+}
+
+static void startTransfer(olsfs::TransferMode mode) {
+  if (app.busy || !app.scanned) return;
+  const std::vector<size_t> items = selectedItemIndices();
+  if (items.empty()) return;
+  size_t plain = 0, archived = 0;
+  std::set<int> archives;
+  for (size_t i : items) {
+    if (app.scan.items[i].inArchive()) { ++archived; archives.insert(app.scan.items[i].archive); }
+    else ++plain;
+  }
+  const bool move = mode == olsfs::TransferMode::Move;
+  const ws dest = pickFolder(move ? L"Move / extract the selected projects to:" : L"Copy / extract the selected projects to:",
+                             app.lastTransferDir.empty() ? app.lastDirectory : app.lastTransferDir);
+  if (dest.empty()) return;
+  ws msg;
+  if (plain) msg += ws(move ? L"Move " : L"Copy ") + std::to_wstring(plain) + L" file(s)";
+  if (archived) msg += ws(plain ? L" and extract " : L"Extract ") + std::to_wstring(archived) + L" project(s) from " +
+                       std::to_wstring(archives.size()) + L" archive(s)";
+  msg += L" to\n" + dest + L" ?\n\n" +
+         ws(app.useNewNames ? L"Projects planned for renaming get their new names; others keep their names. "
+                            : L"Names are kept. ") +
+         L"Existing files are never overwritten (a number is added instead)." +
+         ws(archived ? L" Archives are not modified." : L"");
+  if (MessageBoxW(app.hwnd, msg.c_str(), L"OLS Renamer", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+  app.lastTransferDir = dest;
+  saveSettings();
+  joinWorker();
+  app.busy = true;
+  app.cancel = false;
+  app.lastMode = mode;
+  setProgress(0, 1);
+  setStatus(L"Working...");
+  updateButtons();
+  HWND hwnd = app.hwnd;
+  const bool useNew = app.useNewNames;
+  const bool saveLogs = saveLogsEnabled();
+  app.worker = std::thread([hwnd, items, dest, mode, useNew, saveLogs]() {
+    olsfs::TransferSettings settings;
+    settings.mode = mode;
+    settings.useNewNames = useNew;
+    settings.saveLog = saveLogs;
+    settings.cancel = &app.cancel;
+    settings.progress = [hwnd](size_t d, size_t t) { PostMessageW(hwnd, WM_TRANSFER_PROGRESS, d, t); };
+    app.lastTransfer = olsfs::transferItems(app.scan, items, dest, settings);
+    PostMessageW(hwnd, WM_TRANSFER_DONE, 0, 0);
+  });
+}
+
+static void showTransferMenu(POINT at) {
+  if (app.busy || !app.scanned) return;
+  const bool any = ListView_GetSelectedCount(app.list) > 0;
+  HMENU menu = CreatePopupMenu();
+  AppendMenuW(menu, MF_STRING | (any ? 0 : MF_GRAYED), IDM_MOVE, L"Move / extract selected to folder...");
+  AppendMenuW(menu, MF_STRING | (any ? 0 : MF_GRAYED), IDM_COPY, L"Copy / extract selected to folder...");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING | (app.useNewNames ? MF_CHECKED : 0), IDM_USENEW, L"Use the planned new names");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING, IDM_SELECTALL, L"Select all\tCtrl+A");
+  TrackPopupMenu(menu, TPM_RIGHTBUTTON, at.x, at.y, 0, app.hwnd, nullptr);
+  DestroyMenu(menu);
+}
+
 static void browse() {
   BROWSEINFOW bi = {};
   bi.hwndOwner = app.hwnd;
@@ -542,6 +661,24 @@ static LRESULT onNotify(LPNMHDR nh) {
     }
     return 0;
   }
+  if (nh->code == NM_RCLICK) {
+    POINT pt;
+    GetCursorPos(&pt);
+    showTransferMenu(pt);
+    return 0;
+  }
+  if (nh->code == LVN_ITEMCHANGED || nh->code == LVN_ODSTATECHANGED) {
+    updateButtons();
+    return 0;
+  }
+  if (nh->code == LVN_KEYDOWN) {
+    const auto* kd = reinterpret_cast<const NMLVKEYDOWN*>(nh);
+    if (kd->wVKey == 'A' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+      ListView_SetItemState(app.list, -1, LVIS_SELECTED, LVIS_SELECTED);
+      updateButtons();
+    }
+    return 0;
+  }
   if (nh->code == LVN_COLUMNCLICK) {
     const int column = reinterpret_cast<const NMLISTVIEW*>(nh)->iSubItem;
     if (column < 0 || column > 3) return 0;
@@ -611,6 +748,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       SendMessageW(app.chkArchives, BM_SETCHECK, BST_CHECKED, 0);
       app.chkRewrite = mk(L"BUTTON", L"Allow full archive rewrite (needs free space)", WS_TABSTOP | BS_AUTOCHECKBOX, ID_REWRITE);
       SendMessageW(app.chkRewrite, BM_SETCHECK, BST_CHECKED, 0);
+      app.btnTransfer = mk(L"BUTTON", L"Move / extract selected...", WS_TABSTOP | BS_PUSHBUTTON, ID_TRANSFER);
       loadSettings();
       app.btnScan = mk(L"BUTTON", L"Scan", WS_TABSTOP | BS_DEFPUSHBUTTON, ID_SCAN);
       app.btnRename = mk(L"BUTTON", L"Rename files", WS_TABSTOP | BS_PUSHBUTTON, ID_RENAME);
@@ -620,7 +758,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       app.edFilter = mk(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, ID_FILTER, WS_EX_CLIENTEDGE);
       SendMessageW(app.edFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"Filter by filename, make, ECU, or status...");
       app.chkChanges = mk(L"BUTTON", L"Only rename candidates", WS_TABSTOP | BS_AUTOCHECKBOX, ID_CHANGES);
-      app.list = mk(WC_LISTVIEWW, L"", WS_TABSTOP | LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS | LVS_SINGLESEL,
+      app.list = mk(WC_LISTVIEWW, L"", WS_TABSTOP | LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS,
                     ID_LIST, WS_EX_CLIENTEDGE);
       ListView_SetExtendedListViewStyle(app.list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER |
                                                       LVS_EX_LABELTIP);
@@ -642,7 +780,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       return 0;
     case WM_GETMINMAXINFO: {
       auto* mm = (MINMAXINFO*)l;
-      mm->ptMinTrackSize.x = S(640);
+      mm->ptMinTrackSize.x = S(800);
       mm->ptMinTrackSize.y = S(380);
       return 0;
     }
@@ -665,6 +803,22 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case ID_SCAN:
         case IDOK: startScan(); break;
         case ID_RENAME: startRename(); break;
+        case ID_TRANSFER: {
+          RECT r;
+          GetWindowRect(app.btnTransfer, &r);
+          showTransferMenu(POINT{r.left, r.bottom});
+          break;
+        }
+        case IDM_MOVE: startTransfer(olsfs::TransferMode::Move); break;
+        case IDM_COPY: startTransfer(olsfs::TransferMode::Copy); break;
+        case IDM_USENEW:
+          app.useNewNames = !app.useNewNames;
+          saveSettings();
+          break;
+        case IDM_SELECTALL:
+          ListView_SetItemState(app.list, -1, LVIS_SELECTED, LVIS_SELECTED);
+          updateButtons();
+          break;
         case ID_FILTER:
           if (HIWORD(w) == EN_CHANGE && !app.busy) refreshList();
           break;
@@ -745,6 +899,33 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       ws name = index < app.scan.archives.size() ? app.scan.archives[index].rel : ws();
       setStatus(L"Archive " + std::to_wstring(app.archivesDone + 1) + L" of " + std::to_wstring(app.archivesTotal) +
                 L": " + name + L"  (" + std::to_wstring(w / 10) + L"%)");
+      return 0;
+    }
+    case WM_TRANSFER_PROGRESS: {
+      setProgress(w, l);
+      setStatus(L"Moving / extracting " + std::to_wstring(w) + L" of " + std::to_wstring(l));
+      return 0;
+    }
+    case WM_TRANSFER_DONE: {
+      joinWorker();
+      app.busy = false;
+      setProgress(1, 1);
+      const auto& t = app.lastTransfer;
+      ws s;
+      auto part = [&](size_t n, const wchar_t* label) { if (n) s += (s.empty() ? ws() : ws(L"  |  ")) + std::to_wstring(n) + L" " + label; };
+      part(t.moved, L"moved");
+      part(t.copied, L"copied");
+      part(t.extracted, L"extracted");
+      part(t.skipped, L"skipped");
+      part(t.failed, L"failed");
+      if (s.empty()) s = L"Nothing to do.";
+      if (!t.logPath.empty()) s += L"  |  log saved";
+      setStatus(s);
+      refreshList();
+      updateButtons();
+      if (t.failed)
+        MessageBoxW(h, (std::to_wstring(t.failed) + L" item(s) could not be moved or extracted. The Status column shows why.").c_str(),
+                    L"OLS Renamer", MB_ICONWARNING);
       return 0;
     }
     case WM_RENAME_DONE: {

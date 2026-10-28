@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.5.1
+# OhlsNamer (OLS Renamer) — v1.6.0
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
@@ -24,6 +24,7 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 - Recent-directory dropdown remembers the last 10 successful scan folders
 - Live result filtering by filename, vehicle/ECU identity and status
 - Click any column header to sort by it (click again to reverse; remembered between launches)
+- Select rows (Ctrl/Shift-click, Ctrl+A) and move, copy or extract them to another folder, optionally with their planned new names; nothing is ever overwritten
 - “Only rename candidates” view for quickly reviewing large databases
 - Parallel analysis on every logical processor (16 workers on a Ryzen 7 7800X3D/7700X), capped by free memory
 - Fast map finding: reads and scans only the map/ID area of each project, plus the first ROM image for identity strings
@@ -68,6 +69,10 @@ Measured on the 332-project corpus (AI-Dump `definitions/ols` + repository fixtu
 | Bytes read | 3.16 GB | 2.93 GB |
 
 Results with 1, 2 and 16 workers, and with prefix loading versus full reads, are byte-for-byte identical. The 16-worker figure on a 7800X3D was not benchmarked here (the test machine has 2 cores); expect scaling close to the physical core count.
+
+## Version 1.6.0
+
+- Move, copy or extract selected rows to a folder (right-click or **Move / extract selected...**). Projects inside ZIP/RAR archives are extracted and CRC-checked without changing the archive.
 
 ## Version 1.5.1
 

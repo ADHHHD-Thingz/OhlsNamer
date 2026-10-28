@@ -91,6 +91,12 @@ struct PosixFileOps : ArchiveFileOps {
   bool replace(const ws& target, const ws& replacement) override {
     return ::rename(narrowPath(replacement).c_str(), narrowPath(target).c_str()) == 0;
   }
+  bool renameNoReplace(const ws& from, const ws& to) override {
+    // link() fails with EEXIST instead of replacing; then drop the old name.
+    if (::link(narrowPath(from).c_str(), narrowPath(to).c_str()) != 0) return false;
+    ::unlink(narrowPath(from).c_str());
+    return true;
+  }
   uint64_t freeSpace(const ws& path) override {
     std::string p = narrowPath(path);
     const size_t slash = p.find_last_of('/');

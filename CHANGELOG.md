@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.6.0
+
+- **Move, copy and extract selected rows.** The list now supports multiple selection: Ctrl/Shift-click, or Ctrl+A to select all. Use **Move / extract selected...** or the right-click menu.
+  - **Move / extract selected to folder...** moves plain files (across drives too) and extracts projects out of ZIP/RAR archives.
+  - **Copy / extract selected to folder...** copies plain files instead and also extracts archive projects.
+  - **Use the planned new names** (remembered) applies the proposed name while moving or extracting. It only applies to rows that are planned for renaming, never to review-only proposals.
+  - **Never overwrites:** a name already used in the destination, or by another file in the same batch, gets " 2", " 3", and so on.
+  - **Extraction:** each project is decoded straight from the archive into `<name>.olsrenamer-part`, then checked (ZIP: size and CRC-32; RAR: UnRAR's checksum). It is renamed into place only if the check passes, so corrupt data or a cancel leaves no file behind. The archive is never modified. Solid RAR archives are decoded in one pass.
+  - With **Save rename logs (CSV)** on, an `OLS Renamer transfer log <date>.csv` (operation, source, target, result) is written in the destination folder.
+  - Moved rows show their new location; rescan to plan renames in the new folder. Cancel stops between files.
+- `archive_cli extract ARCHIVE DESTDIR` extracts every project (used by the tests).
+- **Verified:**
+  - Every archive type in the integration test extracts byte-identical projects, the archives stay unchanged, and re-extracting adds numbered copies instead of overwriting.
+  - Four projects stored before and after a 205 GiB entry extracted in 0.11 s, byte-identical.
+  - Unit tests for no-overwrite and CRC rejection pass, also under ASan/UBSan.
+  - Under Wine, a move, a copy and an extraction (44 rows each from a ZIP, a solid RAR and plain files) gave byte-identical results, with plain sources moved and archives untouched.
+
+
 ## 1.5.1
 
 First published release since 1.3.18. It includes everything in 1.4.0 and 1.5.0 below.

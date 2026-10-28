@@ -242,5 +242,40 @@ int main() {
     ops.remove(path);
     ::rmdir(dir.c_str());
   }
+  // Extraction: byte-identical output, never overwrites, no partial files.
+  {
+    char dirTemplate[] = "/tmp/olsarc-test-XXXXXX";
+    const std::string dir = mkdtemp(dirTemplate);
+    const ws archive = fromUtf8(dir + "/x.zip");
+    PosixFileOps ops;
+    const std::string body(70000, 'k');
+    assert(ops.writeDurable(archive, makeZip({{"sub/a.ols", body}, {"b.ols", "tiny"}})));
+    auto src = ops.openRead(archive);
+    ArchiveListing listing;
+    ws err;
+    assert(listArchive(*src, ArchiveKind::Zip, listing, err) && listing.projects.size() == 2);
+    src.reset();
+    const ws outA = fromUtf8(dir + "/a.ols"), outB = fromUtf8(dir + "/b.ols");
+    assert(ops.writeDurable(outB, Bytes{'o', 'l', 'd'}));  // destination already taken
+    std::vector<ExtractResult> results;
+    assert(extractProjects(ops, archive, listing, {{0, outA}, {1, outB}},
+                           [&](ExtractResult&& r) { results.push_back(std::move(r)); }, nullptr, err));
+    assert(results.size() == 2 && results[0].ok && !results[1].ok);
+    Bytes got;
+    assert(ops.readAll(outA, got) && std::string(got.begin(), got.end()) == body);
+    assert(ops.readAll(outB, got) && std::string(got.begin(), got.end()) == "old");  // not overwritten
+    assert(!ops.exists(partPath(outA)) && !ops.exists(partPath(outB)));
+    // A corrupted entry is rejected by the CRC check and leaves no file behind.
+    Bytes zip;
+    assert(ops.readAll(archive, zip));
+    zip[30 + 9 + 100] ^= 0xff;  // inside a.ols data (stored)
+    assert(ops.writeDurable(archive, zip));
+    const ws outBad = fromUtf8(dir + "/bad.ols");
+    results.clear();
+    extractProjects(ops, archive, listing, {{0, outBad}}, [&](ExtractResult&& r) { results.push_back(std::move(r)); }, nullptr, err);
+    assert(results.size() == 1 && !results[0].ok && !ops.exists(outBad) && !ops.exists(partPath(outBad)));
+    for (const ws& f : {archive, outA, outB}) ops.remove(f);
+    ::rmdir(dir.c_str());
+  }
   std::cout << "archive unit checks passed\n";
 }

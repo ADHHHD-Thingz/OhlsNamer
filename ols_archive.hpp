@@ -477,27 +477,40 @@ inline bool readZipProject(ByteSource& src, const ZipEntry& en, PrefixCollector&
 }
 
 // Fully decodes an entry and checks its CRC-32 (used to verify renamed entries).
-inline bool verifyZipEntryCrc(ByteSource& src, const ZipEntry& en, ws& error) {
-  if (en.encrypted()) return true;  // cannot decode; data bytes are compared instead
+// Decodes a whole entry (stored or deflate), handing every chunk to `sink`,
+// and checks the decoded size and CRC-32 against the central directory.
+// `sink` returning false cancels. Unsupported methods and encrypted entries
+// report an error.
+inline bool decodeZipEntry(ByteSource& src, const ZipEntry& en,
+                           const std::function<bool(const uint8_t*, size_t)>& sink, ws& error) {
+  if (en.encrypted()) { error = L"Encrypted entry: it cannot be decoded without the password."; return false; }
+  if (en.method != 0 && en.method != 8) {
+    error = L"Compression method " + std::to_wstring(en.method) + L" is not supported (stored and deflate are).";
+    return false;
+  }
   ZipLocalHeader lh;
   if (!readLocalHeader(src, en.localOffset, lh, error)) return false;
+  if (lh.dataOffset + en.compressedSize > src.size()) { error = L"Entry data runs past the end of the archive."; return false; }
   uint32_t crc = 0;
   uint64_t produced = 0;
   Bytes in(1u << 20), out(1u << 20);
   if (en.method == 0) {
+    if (en.compressedSize != en.uncompressedSize) { error = L"Stored entry sizes disagree."; return false; }
     for (uint64_t pos = 0; pos < en.uncompressedSize;) {
       const size_t want = (size_t)std::min<uint64_t>(in.size(), en.uncompressedSize - pos);
-      if (!src.readAt(lh.dataOffset + pos, in.data(), want)) { error = L"Read error."; return false; }
+      if (!src.readAt(lh.dataOffset + pos, in.data(), want)) { error = L"Read error inside the archive."; return false; }
       crc = crc32Of(in.data(), want, crc);
+      if (sink && !sink(in.data(), want)) { error = L"Cancelled."; return false; }
       pos += want;
     }
     produced = en.uncompressedSize;
-  } else if (en.method == 8) {
+  } else {
     z_stream zs;
     std::memset(&zs, 0, sizeof zs);
-    if (inflateInit2(&zs, -15) != Z_OK) return false;
+    if (inflateInit2(&zs, -15) != Z_OK) { error = L"zlib initialisation failed."; return false; }
     uint64_t consumed = 0;
     int rc = Z_OK;
+    bool cancelled = false;
     while (rc != Z_STREAM_END) {
       if (zs.avail_in == 0) {
         const size_t want = (size_t)std::min<uint64_t>(in.size(), en.compressedSize - consumed);
@@ -513,13 +526,24 @@ inline bool verifyZipEntryCrc(ByteSource& src, const ZipEntry& en, ws& error) {
       const size_t got = out.size() - zs.avail_out;
       crc = crc32Of(out.data(), got, crc);
       produced += got;
+      if (sink && got && !sink(out.data(), got)) { cancelled = true; break; }
+      if (produced > en.uncompressedSize) { rc = Z_DATA_ERROR; break; }
     }
     inflateEnd(&zs);
+    if (cancelled) { error = L"Cancelled."; return false; }
     if (rc != Z_STREAM_END) { error = L"Deflate data is corrupt."; return false; }
-  } else {
-    return true;  // unsupported method: data bytes compared instead
   }
-  if (produced != en.uncompressedSize || crc != en.crc) { error = L"CRC-32 mismatch after rename."; return false; }
+  if (produced != en.uncompressedSize || crc != en.crc) { error = L"CRC-32 mismatch."; return false; }
+  return true;
+}
+
+// Fully decodes an entry and checks its CRC-32 (used to verify renamed entries).
+inline bool verifyZipEntryCrc(ByteSource& src, const ZipEntry& en, ws& error) {
+  if (en.encrypted() || (en.method != 0 && en.method != 8)) return true;  // data bytes are compared instead
+  if (!decodeZipEntry(src, en, nullptr, error)) {
+    if (error == L"CRC-32 mismatch.") error = L"CRC-32 mismatch after rename.";
+    return false;
+  }
   return true;
 }
 
@@ -1540,6 +1564,7 @@ struct ArchiveFileOps {
   virtual bool exists(const ws& path) = 0;
   virtual bool remove(const ws& path) = 0;
   virtual bool replace(const ws& target, const ws& replacement) = 0;  // atomic on one volume
+  virtual bool renameNoReplace(const ws& from, const ws& to) = 0;     // fails if `to` exists
   virtual uint64_t freeSpace(const ws& pathInFolder) = 0;
 };
 

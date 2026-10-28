@@ -152,6 +152,9 @@ struct WinArchiveOps : olsarc::ArchiveFileOps {
   bool replace(const ws& target, const ws& replacement) override {
     return MoveFileExW(replacement.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
   }
+  bool renameNoReplace(const ws& from, const ws& to) override {
+    return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH) != 0;  // no REPLACE_EXISTING
+  }
   uint64_t freeSpace(const ws& path) override {
     ws folder = path.substr(0, path.find_last_of(L"\\/") + 1);
     ULARGE_INTEGER avail;
@@ -974,4 +977,174 @@ inline void writeLog(const Scan& sc, ws& outPath) {
   ok=CloseHandle(h)&&ok;
   if(!ok)outPath.clear();
 }
+// ------------------------------------------------------- move / copy / extract
+// Selected rows to another folder. Plain files are moved or copied; projects
+// inside archives are extracted (decoded straight into the destination and
+// CRC-checked) and the archive is left unchanged. Nothing is ever
+// overwritten: a name already used in the destination gets " 2", " 3", ...
+enum class TransferMode { Move, Copy };
+
+struct TransferSettings {
+  TransferMode mode = TransferMode::Move;
+  bool useNewNames = false;  // apply the planned new name while moving/extracting
+  bool saveLog = true;       // CSV log in the destination folder
+  std::atomic<bool>* cancel = nullptr;
+  std::function<void(size_t done, size_t total)> progress;
+};
+
+struct TransferSummary {
+  size_t moved = 0, copied = 0, extracted = 0, failed = 0, skipped = 0;
+  ws logPath;
+};
+
+inline std::set<ws> folderNames(const ws& dir) {
+  std::set<ws> names;
+  WIN32_FIND_DATAW fd;
+  HANDLE h = FindFirstFileExW((dir + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
+                              FIND_FIRST_EX_LARGE_FETCH);
+  if (h == INVALID_HANDLE_VALUE) return names;
+  do {
+    const ws n = fd.cFileName;
+    if (n != L"." && n != L"..") names.insert(ols::lower(n));
+  } while (FindNextFileW(h, &fd));
+  FindClose(h);
+  return names;
+}
+
+// Name for `it` in the destination: its current name, or the planned new name
+// when asked (only for rows that will be or were renamed, never for
+// review-only proposals).
+inline ws transferName(const Item& it, bool useNewNames) {
+  if (useNewNames && it.a.ok && (it.willRename || it.renamed) && !it.finalName.empty()) return it.finalName;
+  return it.name;
+}
+
+inline TransferSummary transferItems(Scan& sc, const std::vector<size_t>& indices, ws dest,
+                                     const TransferSettings& settings) {
+  TransferSummary sum;
+  while (dest.size() > 3 && (dest.back() == L'\\' || dest.back() == L'/')) dest.pop_back();
+  std::set<ws> taken = folderNames(dest);
+  const ws destPrefix = (!dest.empty() && dest.back() == L'\\') ? dest : dest + L"\\";
+  struct Row { size_t item; ws source; ws target; ws op; ws result; bool ok = false; };
+  std::vector<Row> rows;
+  size_t done = 0;
+  const size_t total = indices.size();
+  auto tick = [&]() { if (settings.progress) settings.progress(++done, total); };
+  auto cancelled = [&]() { return settings.cancel && settings.cancel->load(); };
+  auto quote = [](const ws& v) { ws q = L"\""; for (wchar_t c : v) { if (c == L'"') q += L'"'; q += c; } return q + L"\""; };
+
+  // Plain files first, then one extraction pass per archive.
+  std::map<int, std::vector<size_t>> byArchive;
+  for (size_t i : indices) {
+    if (i >= sc.items.size()) continue;
+    Item& it = sc.items[i];
+    if (it.inArchive()) { byArchive[it.archive].push_back(i); continue; }
+    if (cancelled()) { ++sum.skipped; tick(); continue; }
+    const ws source = it.path();
+    if (ols::lower(it.dir) == ols::lower(dest) && settings.mode == TransferMode::Move &&
+        transferName(it, settings.useNewNames) == it.name) {
+      ++sum.skipped;  // already there
+      tick();
+      continue;
+    }
+    // Moving within the same folder frees the file's own current name.
+    if (settings.mode == TransferMode::Move && ols::lower(it.dir) == ols::lower(dest)) taken.erase(ols::lower(it.name));
+    const ws name = ols::disambiguate(transferName(it, settings.useNewNames), taken);
+    const ws target = destPrefix + name;
+    Row row{i, source, target, settings.mode == TransferMode::Move ? L"moved" : L"copied"};
+    BOOL ok = settings.mode == TransferMode::Move
+                  ? MoveFileExW(source.c_str(), target.c_str(), MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH)
+                  : CopyFileExW(source.c_str(), target.c_str(), nullptr, nullptr, nullptr, COPY_FILE_FAIL_IF_EXISTS);
+    if (ok) {
+      row.ok = true;
+      if (settings.mode == TransferMode::Move) {
+        ++sum.moved;
+        const bool renamedNow = name != it.name;
+        it.dir = dest.back() == L'\\' ? dest.substr(0, dest.size() - 1) : dest;
+        it.name = name;
+        it.rel = target;
+        it.renamed = it.renamed || renamedNow;
+        it.willRename = false;  // planned against the old folder; rescan to plan again
+        it.failed = false;
+        it.status = L"Moved to " + dest + (renamedNow ? L" (renamed)" : ws());
+      } else {
+        ++sum.copied;
+        it.status = L"Copied to " + target;
+      }
+      row.result = L"ok";
+    } else {
+      const DWORD e = GetLastError();
+      taken.erase(ols::lower(name));
+      ++sum.failed;
+      it.failed = true;
+      row.result = lastError(e);
+      it.status = ws(settings.mode == TransferMode::Move ? L"Not moved: " : L"Not copied: ") + row.result;
+    }
+    rows.push_back(row);
+    tick();
+  }
+
+  WinArchiveOps ops;
+  for (auto& group : byArchive) {
+    ArchiveInfo& arc = sc.archives[(size_t)group.first];
+    std::vector<olsarc::ExtractRequest> requests;
+    std::map<size_t, size_t> itemOfProject;
+    for (size_t i : group.second) {
+      Item& it = sc.items[i];
+      if (cancelled()) { ++sum.skipped; tick(); continue; }
+      const ws name = ols::disambiguate(transferName(it, settings.useNewNames), taken);
+      requests.push_back({it.project, destPrefix + name});
+      itemOfProject[it.project] = i;
+    }
+    if (requests.empty()) continue;
+    ws err;
+    olsarc::extractProjects(ops, arc.path, arc.listing, requests, [&](olsarc::ExtractResult&& r) {
+      auto f = itemOfProject.find(r.project);
+      if (f == itemOfProject.end()) return;
+      Item& it = sc.items[f->second];
+      ws target;
+      for (const auto& rq : requests) if (rq.project == r.project) target = rq.target;
+      Row row{f->second, it.path(), target, L"extracted"};
+      row.ok = r.ok;
+      row.result = r.ok ? ws(L"ok") : r.error;
+      if (r.ok) {
+        ++sum.extracted;
+        it.status = L"Extracted to " + target;
+      } else {
+        ++sum.failed;
+        it.status = L"Not extracted: " + r.error;
+        const size_t slash = target.find_last_of(L"\\");
+        taken.erase(ols::lower(target.substr(slash + 1)));
+      }
+      rows.push_back(row);
+      tick();
+    }, [&](uint64_t) { return !cancelled(); }, err);
+  }
+
+  if (settings.saveLog && !rows.empty()) {
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    wchar_t stamp[64];
+    swprintf(stamp, 64, L"%04d-%02d-%02d %02d%02d%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    ws text = L"Operation,Source,Target,Result\r\n";
+    for (const auto& r : rows)
+      text += r.op + L"," + quote(r.source) + L"," + quote(r.target) + L"," + quote(r.result) + L"\r\n";
+    std::string bytes = "\xEF\xBB\xBF" + ols::utf8(text);
+    for (int attempt = 1; attempt <= 100; ++attempt) {
+      const ws path = destPrefix + L"OLS Renamer transfer log " + stamp + (attempt == 1 ? ws() : L" " + std::to_wstring(attempt)) + L".csv";
+      HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+      if (h == INVALID_HANDLE_VALUE) {
+        if (GetLastError() == ERROR_FILE_EXISTS) continue;
+        break;
+      }
+      DWORD wrote = 0;
+      const bool ok = WriteFile(h, bytes.data(), (DWORD)bytes.size(), &wrote, nullptr) && wrote == bytes.size();
+      CloseHandle(h);
+      if (ok) sum.logPath = path;
+      break;
+    }
+  }
+  return sum;
+}
+
 }  // namespace olsfs
