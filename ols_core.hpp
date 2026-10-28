@@ -10,6 +10,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ols {
@@ -247,7 +248,92 @@ inline ws fromAscii(const char* s) {
 }
 
 // ---------------------------------------------------------------- labels.ts
-inline bool isPlaceholderLabel(const ws& raw) {
+// Supplier words used by WinOLS when it generates placeholder labels.
+inline bool isSupplierWord(const ws& w) {
+  static const std::set<ws> s = {
+      L"bosch", L"siemens", L"continental", L"delphi", L"denso", L"marelli", L"magneti", L"delco",
+      L"visteon", L"temic", L"keihin", L"hitachi", L"sagem", L"lucas", L"motorola", L"trionic",
+      L"transtron", L"vdo", L"kefico", L"uaes", L"weifu", L"mitsubishi", L"panasonic", L"valeo",
+      L"vale\x00f3", L"aptiv", L"renesas", L"infineon", L"hella", L"aisin", L"zf"};
+  return s.count(w) != 0;
+}
+
+// First run of ASCII letters, lower-cased ("Map \"Bosch\"" -> "map").
+inline ws leadingWord(const ws& lowered) {
+  ws w;
+  for (wchar_t c : lowered) {
+    if (c >= L'a' && c <= L'z') w += c;
+    else if (c == 0x00f3 && !w.empty()) w += c;  // "valeó"
+    else break;
+  }
+  return w;
+}
+
+// WinOLS "potential map" statistics captions: axis/size figures and the cell
+// value range, e.g. "1700 =8192", "7500x120c =8192/0", "G 2000x1317 =<666",
+// "95% =0" and a bare "10%". They contain no map identity.
+inline bool isStatisticsCaption(const ws& s) {
+  bool sawEquals = false, sawPercent = false, sawDigit = false;
+  for (wchar_t c : s) {
+    if (c == L'=') sawEquals = true;
+    else if (c == L'%') sawPercent = true;
+    else if (c >= L'0' && c <= L'9') sawDigit = true;
+  }
+  if (!sawDigit || (!sawEquals && !sawPercent)) return false;
+  static const std::wregex R(
+      L"^(?:[a-z]{1,2}\\s+)?-?\\d+(?:[.,]\\d+)?%?(?:\\s*[x\x00d7*]\\s*-?\\d+(?:[.,]\\d+)?)?[a-z]?"
+      L"(?:\\s*=\\s*[<>]?\\s*-?\\d+(?:[.,]\\d+)?%?(?:\\s*/\\s*-?\\d+(?:[.,]\\d+)?)?[a-z]?)?\\s*$",
+      std::regex::ECMAScript | std::regex::icase);
+  if (!std::regex_match(s, R)) return false;
+  // Without "=" only a bare percentage ("10%") qualifies.
+  return sawEquals || s.back() == L'%';
+}
+
+// True when every word in lowered[from, to) is WinOLS layout vocabulary
+// (supplier, family numeral, orientation, data type) and the rest is numbers or
+// punctuation, e.g. `Bosch II 16/8`, `Denso Float`, `"Bosch 8"`.
+inline bool isTypeVocabularyOnly(const ws& lowered, size_t from, size_t to) {
+  static const std::set<ws> vocabulary = {
+      L"i", L"ii", L"iii", L"iv", L"v", L"vi", L"vii", L"viii", L"ix", L"x", L"vertikal",
+      L"vertical", L"horizontal", L"float", L"double", L"bit", L"bits", L"signed", L"unsigned",
+      L"lohi", L"hilo", L"big", L"little", L"endian", L"statistical", L"statistisch",
+      L"statistische", L"statistich", L"statistic", L"statistics"};
+  ws token;
+  bool meaningful = false;
+  auto flush = [&]() {
+    if (!token.empty() && !vocabulary.count(token) && !isSupplierWord(token)) meaningful = true;
+    token.clear();
+  };
+  for (size_t i = from; i < to && i < lowered.size(); ++i) {
+    const wchar_t c = lowered[i];
+    if ((c >= L'a' && c <= L'z') || c == 0x00f3) token += c;
+    else if ((c >= L'0' && c <= L'9') || c == L' ' || c == L'/' || c == L'"' || c == L'\'' ||
+             c == L'(' || c == L')' || c == L'!' || c == L'?' || c == L'-' || c == L'.')
+      flush();
+    else return false;  // anything else (letters outside ASCII, '_', ...) is not generated text
+  }
+  flush();
+  return !meaningful;
+}
+
+// `Map "<type>"` / `Kennfeld '<type>'` where the quoted part is only WinOLS
+// layout vocabulary (supplier, family numeral, orientation, data type, size).
+inline bool isQuotedTypeLabel(const ws& lowered) {
+  const ws first = leadingWord(lowered);
+  if (first != L"map" && first != L"kennfeld" && first != L"kennlinie") return false;
+  size_t q = first.size();
+  while (q < lowered.size() && lowered[q] == L' ') ++q;
+  if (q >= lowered.size() || (lowered[q] != L'"' && lowered[q] != L'\'')) return false;
+  const wchar_t quote = lowered[q];
+  const size_t close = lowered.find(quote, q + 1);
+  if (close == ws::npos) return false;
+  ws tail = lowered.substr(close + 1);
+  for (wchar_t c : tail)
+    if (c != L' ' && c != L'(' && c != L')' && c != L'!') return false;
+  return isTypeVocabularyOnly(lowered, q + 1, close);
+}
+
+inline bool isPlaceholderLabelUncached(const ws& raw) {
   static const std::set<ws> ENV = [] {
     std::set<ws> e;
     const wchar_t* list[] = {L"(damos)", L"ols 5.0 (windows)", L"hexdump", L"hex dump", L"hex-dump",
@@ -257,7 +343,8 @@ inline bool isPlaceholderLabel(const ws& raw) {
                              L"moegliche kennfelder", L"original", L"passenger car", L"engine",
                              L"binary data", L"0 (original)", L"version 1", L"differences", L"text",
                              L"untitled", L"unnamed", L"new map", L"newmap", L"map", L"kennfeld",
-                             L"kennlinie", L"einzelwert", L"value", L"curve", L"imported"};
+                             L"kennlinie", L"einzelwert", L"value", L"curve", L"imported",
+                             L"default"};
     for (auto* x : list) e.insert(x);
     return e;
   }();
@@ -275,7 +362,7 @@ inline bool isPlaceholderLabel(const ws& raw) {
   static const R FAMILY_MAP(
       L"^(?:map|kennfeld|kennlinie)\\s*\\\"?\\s*(?:bosch|siemens|continental|delphi|denso|marelli|"
       L"magneti(?:\\s+marelli)?|delco|visteon|temic|keihin|hitachi|sagem|lucas|motorola|trionic|transtron|"
-      L"vdo|kefico|uaes|weifu|mitsubishi|panasonic|vale[oó]|aptiv|renesas|hella|aisin|zf|statistical)"
+      L"vdo|kefico|uaes|weifu|mitsubishi|panasonic|vale[o\x00f3]|aptiv|renesas|hella|aisin|zf|statistical)"
       L"(?:\\s+(?:ii|iii|iv|vertikal|vertical|horizontal))?\\s+(?:\\d+(?:\\s*/\\s*\\d+)?|float)\\s*\\\"?\\s*(?:\\(!\\))?$",
       fl);
   // A supplier followed only by a Roman-numeral family/index label (e.g. "Bosch II")
@@ -284,29 +371,37 @@ inline bool isPlaceholderLabel(const ws& raw) {
   static const R PRODUCER_FAMILY(
       L"^(bosch|siemens|continental|delphi|denso|marelli|magneti(?:\\s+marelli)?|delco|visteon|temic|"
       L"keihin|hitachi|sagem|lucas|motorola|trionic|transtron|vdo|kefico|uaes|weifu|mitsubishi|"
-      L"panasonic|vale[oó]|aptiv|renesas|infineon|hella|aisin|zf)\\s+(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)(?:\\s+\\d+)?$",
+      L"panasonic|vale[o\x00f3]|aptiv|renesas|infineon|hella|aisin|zf)\\s+(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)(?:\\s+\\d+)?$",
       fl);
   // WinOLS-generated supplier labels are placeholders, not human-authored map names.
-  // Supplier-generated names are commonly numbered and may include the
-  // detected dimensions in parentheses/brackets. Exclude only the generated
-  // "supplier map" form; don't exclude real names such as "Bosch torque limiter".
   static const R PRODUCER_MAP(
       L"^(bosch|siemens|continental|delphi|denso|marelli|magneti(?:\\s+marelli)?|delco|visteon|temic|"
       L"keihin|hitachi|sagem|lucas|motorola|trionic|transtron|vdo|kefico|uaes|weifu|mitsubishi|"
-      L"panasonic|vale[oó]|aptiv|renesas|infineon|hella|aisin|zf)\\s+(?:map|kennfeld|kennlinie)\\b",
+      L"panasonic|vale[o\x00f3]|aptiv|renesas|infineon|hella|aisin|zf)\\s+(?:map|kennfeld|kennlinie)\\b",
       fl);
   static const R ONLYNUM(L"^\\d+$");
   static const R HEXID(L"^(?:0x[0-9a-f]{1,8}|(?=[0-9a-f]{8,16}$)(?=[0-9a-f]*[0-9])[0-9a-f]+)$", fl);
   static const R HEXADDRPAIR(L"^(?:0x)?[0-9a-f]{4,16}(?:\\s*/\\s*(?:0x)?[0-9a-f]{4,16})+$", fl);
   static const R SHORTINDEX(L"^[a-z][0-9]$", fl);
-  static const R DIMONLY(L"^\\d+\\s*[xX×*]\\s*\\d+$", fl);
+  static const R DIMONLY(L"^\\d+\\s*[xX\x00d7*]\\s*\\d+$", fl);
   static const R BIT(L"\\d+\\s*-?\\s*bits?\\b", fl);
-  static const R DIM(L"\\d+\\s*[xX×*]\\s*\\d+", fl);
+  static const R DIM(L"\\d+\\s*[xX\x00d7*]\\s*\\d+", fl);
   static const R ORDER(L"\\b(lohi|hilo|big[\\s-]?endian|little[\\s-]?endian)\\b", fl);
   static const R BITORDER(L"^\\d+\\s*-?\\s*bits?\\b[\\s,.-]*(lohi|hilo)\\b", fl);
   ws s = spaceNorm(jsTrim(removeNul(raw)));  // trim happens before normalising in JS; same result
   if (s.empty()) return true;
   if (s == L"-" || s == L"?" || s == L"%") return true;
+  // One character ("V", "?") never names a map.
+  if (s.size() == 1) return true;
+  // Unknown-marker question marks ("Map ???", "???") add nothing: judge the rest.
+  if (s.find(L'?') != ws::npos) {
+    ws stripped;
+    for (wchar_t ch : s)
+      if (ch != L'?') stripped += ch;
+    stripped = jsTrim(stripped);
+    if (stripped.empty()) return true;
+    if (isPlaceholderLabelUncached(stripped)) return true;
+  }
 
   // n = s.toLowerCase().replace(/\s+/g, " ")
   ws n;
@@ -338,76 +433,123 @@ inline bool isPlaceholderLabel(const ws& raw) {
     }
   }
   if (statistical.rfind(L"statist", 0) == 0) return true;
-  if (std::regex_search(s, GENERIC)) return true;
-  // WinOLS may serialize the same generated family label with either quote style.
-  // Canonicalize apostrophes only for this narrowly-scoped placeholder test.
-  ws familyLabel = s;
-  std::replace(familyLabel.begin(), familyLabel.end(), static_cast<wchar_t>(39), static_cast<wchar_t>(34));
-  if (std::regex_match(familyLabel, FAMILY_MAP)) return true;
-  if (std::regex_match(s, PRODUCER_FAMILY)) return true;
-  // WinOLS-generated supplier map labels can carry machine-generated
-  // formatting (e.g. "Bosch map 2: 16 bit / 16x16"). Exclude these only
-  // when the tail contains numeric/dimension/encoding tokens and no human words.
-  std::wsmatch producerMapMatch;
-  if (std::regex_search(s, producerMapMatch, PRODUCER_MAP) &&
-      producerMapMatch.position() == 0) {
-    ws tail = lower(s.substr((size_t)producerMapMatch.length()));
-    bool hasHumanTailWord = false;
-    ws token;
-    auto checkTailToken = [&]() {
-      if (token.empty()) return;
-      ws cleaned;
-      for (wchar_t c : token)
-        if ((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == 0x00d7)
-          cleaned += c;
-      if (cleaned.empty()) { token.clear(); return; }
-      static const std::set<ws> technical = {
-          L"bit", L"bits", L"lohi", L"hilo", L"big", L"little", L"endian", L"bigendian", L"littleendian",
-          L"signed", L"unsigned", L"be", L"le", L"msb", L"lsb", L"x"};
-      bool numeric = std::all_of(cleaned.begin(), cleaned.end(), [](wchar_t c) {
-        return (c >= L'0' && c <= L'9') || c == 0x00d7;
-      });
-      bool hexIndex = cleaned.size() > 2 && cleaned[0] == L'0' && cleaned[1] == L'x' &&
-          std::all_of(cleaned.begin() + 2, cleaned.end(), [](wchar_t c) {
-            return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f');
-          });
-      if (!numeric && !hexIndex && !technical.count(cleaned) &&
-          !std::regex_match(cleaned, DIMONLY))
-        hasHumanTailWord = true;
-      token.clear();
-    };
-    for (wchar_t c : tail) {
-      if ((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == 0x00d7)
-        token += c;
-      else
-        checkTailToken();
-    }
-    checkTailToken();
-    if (!hasHumanTailWord) return true;
-  }
-  if (std::regex_search(s, ONLYNUM)) return true;
-  if (std::regex_search(s, HEXID)) return true;
-  if (std::regex_search(s, HEXADDRPAIR)) return true;
-  if (std::regex_search(s, SHORTINDEX)) return true;
-  if (std::regex_search(s, DIMONLY)) return true;
 
-  bool hasBit = std::regex_search(s, BIT);
-  bool hasDim = std::regex_search(s, DIM);
-  bool hasOrder = std::regex_search(s, ORDER);
+  // Cheap necessary conditions gate every regex below. Most real labels are
+  // DAMOS identifiers (e.g. "Mo_trqIdcMax_C") that pass none of the gates, so a
+  // multi-thousand-map project no longer runs ~15 regexes per record.
+  // Prefix (not whole-word) tests: the regexes allow zero spaces after the
+  // leading word (e.g. "mapBosch 16", "potmap"), so the gates must too.
+  auto startsWithAny = [&](std::initializer_list<const wchar_t*> prefixes) {
+    for (const wchar_t* p : prefixes)
+      if (n.rfind(p, 0) == 0) return true;
+    return false;
+  };
+  const bool genericLead = startsWithAny({L"map", L"kennfeld", L"kennlinie", L"einzelwert", L"value",
+                                          L"curve", L"pot", L"my", L"new", L"unnamed", L"untitled"});
+  const bool typeLead = startsWithAny({L"map", L"kennfeld", L"kennlinie"});
+  const bool supplierLead = startsWithAny({
+      L"bosch", L"siemens", L"continental", L"delphi", L"denso", L"marelli", L"magneti", L"delco",
+      L"visteon", L"temic", L"keihin", L"hitachi", L"sagem", L"lucas", L"motorola", L"trionic",
+      L"transtron", L"vdo", L"kefico", L"uaes", L"weifu", L"mitsubishi", L"panasonic", L"vale",
+      L"aptiv", L"renesas", L"infineon", L"hella", L"aisin", L"zf"});
+  bool hasDigit = false, onlyDigits = true, hexish = true, hexPairish = true;
+  bool hasDimMark = false;
+  for (wchar_t c : n) {
+    const bool digit = c >= L'0' && c <= L'9';
+    const bool hex = digit || (c >= L'a' && c <= L'f');
+    if (digit) hasDigit = true;
+    else onlyDigits = false;
+    if (!hex && c != L'x') hexish = false;
+    if (!hex && c != L'x' && c != L'/' && c != L' ') hexPairish = false;
+    if (c == L'x' || c == 0x00d7 || c == L'*') hasDimMark = true;
+  }
+  const bool mentionsBit = n.find(L"bit") != ws::npos;
+  const bool mentionsOrder = n.find(L"lohi") != ws::npos || n.find(L"hilo") != ws::npos ||
+                             n.find(L"endian") != ws::npos;
+
+  if (genericLead && std::regex_search(s, GENERIC)) return true;
+  if (typeLead) {
+    // WinOLS may serialize the same generated family label with either quote style.
+    // Canonicalize apostrophes only for this narrowly-scoped placeholder test.
+    ws familyLabel = s;
+    std::replace(familyLabel.begin(), familyLabel.end(), static_cast<wchar_t>(39), static_cast<wchar_t>(34));
+    if (std::regex_match(familyLabel, FAMILY_MAP)) return true;
+    if (isQuotedTypeLabel(n)) return true;
+  }
+  if (supplierLead || n[0] == L'"' || n[0] == L'\'') {
+    // Supplier/type captions on their own: `Bosch 16`, `Denso Float`, `"Bosch 8"`.
+    size_t from = 0, to = n.size();
+    if (n[0] == L'"' || n[0] == L'\'') ++from;
+    ws lead = leadingWord(n.substr(from));
+    if (isSupplierWord(lead) && isTypeVocabularyOnly(n, from, to)) return true;
+  }
+  if (supplierLead) {
+    if (std::regex_match(s, PRODUCER_FAMILY)) return true;
+    // WinOLS-generated supplier map labels can carry machine-generated
+    // formatting (e.g. "Bosch map 2: 16 bit / 16x16"). Exclude these only
+    // when the tail contains numeric/dimension/encoding tokens and no human words.
+    std::wsmatch producerMapMatch;
+    if (std::regex_search(s, producerMapMatch, PRODUCER_MAP) &&
+        producerMapMatch.position() == 0) {
+      ws tail = lower(s.substr((size_t)producerMapMatch.length()));
+      bool hasHumanTailWord = false;
+      ws token;
+      auto checkTailToken = [&]() {
+        if (token.empty()) return;
+        ws cleaned;
+        for (wchar_t c : token)
+          if ((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == 0x00d7)
+            cleaned += c;
+        if (cleaned.empty()) { token.clear(); return; }
+        static const std::set<ws> technical = {
+            L"bit", L"bits", L"lohi", L"hilo", L"big", L"little", L"endian", L"bigendian", L"littleendian",
+            L"signed", L"unsigned", L"be", L"le", L"msb", L"lsb", L"x"};
+        bool numeric = std::all_of(cleaned.begin(), cleaned.end(), [](wchar_t c) {
+          return (c >= L'0' && c <= L'9') || c == 0x00d7;
+        });
+        bool hexIndex = cleaned.size() > 2 && cleaned[0] == L'0' && cleaned[1] == L'x' &&
+            std::all_of(cleaned.begin() + 2, cleaned.end(), [](wchar_t c) {
+              return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f');
+            });
+        if (!numeric && !hexIndex && !technical.count(cleaned) &&
+            !std::regex_match(cleaned, DIMONLY))
+          hasHumanTailWord = true;
+        token.clear();
+      };
+      for (wchar_t c : tail) {
+        if ((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == 0x00d7)
+          token += c;
+        else
+          checkTailToken();
+      }
+      checkTailToken();
+      if (!hasHumanTailWord) return true;
+    }
+  }
+  // "beef / cafe" is a valid all-letter hex address pair, so no digit gate here.
+  if (hexPairish && n.find(L'/') != ws::npos && std::regex_search(s, HEXADDRPAIR)) return true;
+  if (hasDigit) {
+    if (onlyDigits && std::regex_search(s, ONLYNUM)) return true;
+    if (hexish && std::regex_search(s, HEXID)) return true;
+    if (s.size() == 2 && std::regex_search(s, SHORTINDEX)) return true;
+    if (hasDimMark && n[0] >= L'0' && n[0] <= L'9' && std::regex_search(s, DIMONLY)) return true;
+    if (isStatisticsCaption(n)) return true;
+  }
+
+  bool hasBit = hasDigit && mentionsBit && std::regex_search(s, BIT);
+  bool hasDim = hasDigit && hasDimMark && std::regex_search(s, DIM);
+  bool hasOrder = mentionsOrder && std::regex_search(s, ORDER);
   // A bit-width/dimension string is autogenerated only when it contains no
-  // actual map identifier. Previously, the broad hasBit/hasDim checks also
-  // rejected names such as "LDRXN 16 bit 16x16" and "Bosch torque limiter
-  // 16 bit 16x16". Strip known technical descriptors and (if present) the
+  // actual map identifier. Strip known technical descriptors and (if present) the
   // leading supplier; any meaningful remainder makes it a human map name.
   if (hasBit || hasDim || hasOrder) {
     ws residue = lower(s);
     std::wsmatch supplierMatch;
-    if (std::regex_search(residue, supplierMatch, PRODUCER) &&
+    if (supplierLead && std::regex_search(residue, supplierMatch, PRODUCER) &&
         supplierMatch.position() == 0) {
       residue = residue.substr((size_t)supplierMatch.length());
     }
     // Tokenize cheaply instead of running several regex replacements per map.
-    // This path can execute millions of times in large calibration databases.
     static const std::set<ws> TECHNICAL_TOKENS = {
         L"bit", L"bits", L"map", L"maps", L"x", L"lohi", L"hilo",
         L"big", L"little", L"endian", L"be", L"le", L"msb", L"lsb",
@@ -428,8 +570,23 @@ inline bool isPlaceholderLabel(const ws& raw) {
     consumeToken();
     if (!meaningful) return true;
   }
-  if (std::regex_search(s, BITORDER) && s.size() < 48) return true;
+  if (hasDigit && mentionsBit && n[0] >= L'0' && n[0] <= L'9' &&
+      std::regex_search(s, BITORDER) && s.size() < 48)
+    return true;
   return false;
+}
+
+// Labels repeat heavily across a project (and across projects of one family),
+// so memoize the verdict per worker thread. Bounded to keep memory flat on
+// 4,000+ project scans.
+inline bool isPlaceholderLabel(const ws& raw) {
+  thread_local std::unordered_map<ws, bool> cache;
+  auto it = cache.find(raw);
+  if (it != cache.end()) return it->second;
+  const bool verdict = isPlaceholderLabelUncached(raw);
+  if (cache.size() >= 200000) cache.clear();
+  cache.emplace(raw, verdict);
+  return verdict;
 }
 
 inline bool isHexdump(const ws& description) {
@@ -437,14 +594,49 @@ inline bool isHexdump(const ws& description) {
   return std::regex_search(spaceNorm(jsTrim(removeNul(description))), R);
 }
 
+// A map *name* that is only a record identifier: a decimal/hex ID, address
+// (pair), one-letter index or symbol such as "00004b0e", "0x2",
+// "0x1b2f / 0x1b2f", "A0", "N0" or "n", or a bare record word such as "Map". Importers (Cummins
+// calibrations, GM mappacks, DAMOS conversions) put the real map title in the
+// description in that case.
+inline bool isIdOnlyMapName(const ws& raw) {
+  ws s = jsTrim(removeNul(raw));
+  if (s.empty()) return false;
+  const ws n = lower(spaceNorm(s));
+  if (n == L"map" || n == L"kennfeld" || n == L"kennlinie" || n == L"einzelwert" ||
+      n == L"value" || n == L"curve")
+    return true;
+  // One-letter symbols ("n" = engine speed) carry their meaning in the description.
+  if (n.size() == 1) return true;
+  bool hasDigit = false;
+  for (wchar_t c : n) {
+    const bool digit = c >= L'0' && c <= L'9';
+    const bool hex = digit || (c >= L'a' && c <= L'f');
+    if (digit) hasDigit = true;
+    if (!hex && c != L'x' && c != L'/' && c != L' ' && !(c >= L'a' && c <= L'z')) return false;
+  }
+  if (!hasDigit) return false;
+  static const std::wregex ID(
+      L"^(?:\\d+|0x[0-9a-f]{1,8}|[0-9a-f]{8,16}|(?:0x)?[0-9a-f]{4,16}(?:\\s*/\\s*(?:0x)?[0-9a-f]{4,16})+|[a-z][0-9])$",
+      std::regex::ECMAScript | std::regex::icase);
+  return std::regex_match(n, ID);
+}
+
 inline bool isDefinedMap(const ws& name, const ws& description) {
-  // Prefer the explicit map name when present. Some OLS schema families store
-  // human-assigned labels in the description field and leave the name empty;
-  // counting only name silently drops real maps (e.g. DTC-off and torque maps).
-  // A non-empty generated name remains authoritative as a placeholder.
+  // The explicit map name is authoritative when it is a real label. Two
+  // fallbacks keep valuable names from being dropped:
+  //  - empty name: some schema families store the human label in the description;
+  //  - ID-only name (hex/number/address/index or bare "Map"): importers put the
+  //    record ID in the name and the calibration name in the description.
+  // A generated supplier name ("Bosch map 2") still never borrows a description.
   ws t = jsTrim(removeNul(name));
-  if (!t.empty()) return !isPlaceholderLabel(t);
   ws fallback = jsTrim(removeNul(description));
+  if (!t.empty()) {
+    if (!isPlaceholderLabel(t)) return true;
+    if (!isIdOnlyMapName(t)) return false;
+    if (fallback.empty() || lower(fallback) == lower(t)) return false;
+    return !isPlaceholderLabel(fallback);
+  }
   return !fallback.empty() && !isPlaceholderLabel(fallback);
 }
 
@@ -715,6 +907,12 @@ struct Analysis {
   int definedCount = 0, skippedCount = 0;
   ws proposed;
   std::string mapSource = "unread";
+  // Fast map finding diagnostics: where the map/ID area ends and the embedded
+  // ROM images begin, and how much of the file had to be read.
+  size_t mapAreaEnd = 0, romImageStart = 0, romImageEnd = 0;
+  size_t mapDirectoryOffset = 0;  // marker/record start of the chosen map directory
+  uint64_t fileSize = 0, bytesLoaded = 0;
+  bool needsFullFile = false;
 };
 
 inline uint32_t rd32(const uint8_t* d, size_t p) {
@@ -735,11 +933,20 @@ struct VersionDirectory {
 
 // M1 is a version-directory fence, not a map-directory marker.
 // Its preceding words are [version_count - 1, version_data_start, version_record_size].
-inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory& out) {
+// `loaded` bytes of a `fileSize`-byte project are in memory. When only a prefix
+// is loaded (fast map-area loading), arithmetic is still checked against the
+// real file size; M3 corroboration needs the 4 bytes at version_data_start.
+// `earlyStop` reports whether the scan ended on the strongest possible match
+// (M3-corroborated, array ending exactly at EOF), i.e. no byte beyond it could
+// change the result.
+inline bool locateVersionDirectory(const uint8_t* d, size_t loaded, uint64_t fileSize,
+                                   VersionDirectory& out, bool* earlyStop = nullptr) {
+  if (earlyStop) *earlyStop = false;
+  const size_t n = loaded;
   if (!d || n < 16) return false;
   bool found = false;
   bool bestHasM3 = false;
-  size_t bestTrailing = n + 1;
+  uint64_t bestTrailing = fileSize + 1;
   // The version-directory marker belongs to the serialized project header,
   // before the embedded ROM/version array. Scanning an entire multi-megabyte
   // ROM for marker-shaped bytes is both slow and prone to false dispatch.
@@ -762,17 +969,17 @@ inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory&
     const uint64_t count64 = (uint64_t)countMinusOne + 1u;
     if (count64 > 64 || recordSize == 0 ||
         recordSize > 64u * 1024u * 1024u) continue;
-    if (start < p + 4 || (uint64_t)start + 4u > n) continue;
+    if (start < p + 4 || (uint64_t)start + 4u > fileSize) continue;
     const uint64_t end64 = (uint64_t)start + 4u + (uint64_t)recordSize * count64;
-    if (end64 > n) continue;
+    if (end64 > fileSize) continue;
 
     // M3 (0x98728833) is commonly the first word at version_data_start.
     // Treat it as corroborating structure, not an unconditional requirement:
     // older/unusual schema variants may omit it. This prevents a random M1-like
     // sequence in a ROM payload from winning merely because its arithmetic ends
     // exactly at EOF.
-    const bool hasM3 = rd32(d, start) == 0x98728833u;
-    const size_t trailing = n - (size_t)end64;
+    const bool hasM3 = (size_t)start + 4u <= n && rd32(d, start) == 0x98728833u;
+    const uint64_t trailing = fileSize - end64;
     const bool better = !found || (hasM3 && !bestHasM3) ||
                         (hasM3 == bestHasM3 && trailing < bestTrailing);
     if (better) {
@@ -787,10 +994,45 @@ inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory&
       // A corroborated M3 directory whose record array ends exactly at EOF is
       // the strongest available structural match. Stop here instead of scanning
       // megabytes of embedded ROM bytes for further marker collisions.
-      if (hasM3 && trailing == 0) return true;
+      if (hasM3 && trailing == 0) {
+        if (earlyStop) *earlyStop = true;
+        return true;
+      }
     }
   }
   return found;
+}
+
+inline bool locateVersionDirectory(const uint8_t* d, size_t n, VersionDirectory& out) {
+  return locateVersionDirectory(d, n, n, out);
+}
+
+// Fast map finding: the map/ID area is everything before the embedded ROM
+// version array (M1 version_data_start). Only that area, plus the first ROM
+// image for identity strings, is needed for naming. Returns how many leading
+// bytes of the file must be loaded; callers grow their buffer until it is
+// satisfied. Falls back to the whole file whenever the boundary cannot be
+// proven from the loaded prefix, so results never depend on the prefix size.
+// First read size for the map-area loader. M1 sits in the serialized header
+// (0x5FE in the documented sample), so 1 MiB normally proves the boundary in
+// one read; the loader grows the buffer when it does not.
+static constexpr size_t kInitialLoadBytes = 1u << 20;
+
+inline uint64_t requiredLoadLength(const uint8_t* d, size_t loaded, uint64_t fileSize) {
+  if (loaded >= fileSize) return fileSize;
+  VersionDirectory vd;
+  bool early = false;
+  if (!locateVersionDirectory(d, loaded, fileSize, vd, &early)) {
+    // M1 may lie beyond the loaded prefix: its search window is the first 8 MiB.
+    const uint64_t window = 8ull * 1024u * 1024u;
+    return loaded < std::min<uint64_t>(fileSize, window) ? std::min<uint64_t>(fileSize, window)
+                                                          : fileSize;
+  }
+  // Without the early stop the full-file scan could still prefer a later M1
+  // inside its 8 MiB window; load that window so the choice is identical.
+  uint64_t need = (uint64_t)vd.dataStart + 4u + (uint64_t)vd.recordSize;  // first ROM image
+  if (!early) need = std::max<uint64_t>(need, std::min<uint64_t>(fileSize, 8ull * 1024u * 1024u));
+  return std::min<uint64_t>(need, fileSize);
 }
 
 inline bool isText(const uint8_t* d, size_t off, size_t n) {
@@ -1101,6 +1343,7 @@ struct Candidate {
   std::vector<MapRow> maps;
   std::string source;
   ws warning;
+  size_t offset = 0;  // file offset where the directory's records start
 };
 
 struct Marker {
@@ -1169,6 +1412,7 @@ inline Candidate readMapBlock(const uint8_t* d, size_t n, size_t start, uint32_t
   Seq seq(d, n, version, start);
   Candidate c;
   c.source = "map directory";
+  c.offset = start;
   for (uint32_t i = 0; i < count; i++) {
     MapRow r;
     try {
@@ -1303,6 +1547,7 @@ inline Candidate scanMapDirectory(const uint8_t* d, size_t n, uint32_t version) 
     }
     Candidate candidate;
     candidate.source = "scanned map directory";
+    candidate.offset = start;
     candidate.warning = L"Recovered by sequential scan; directory count is heuristic.";
     size_t cursor = start;
     while (candidate.maps.size() < 200000 && cursor + 16 < n) {
@@ -1476,6 +1721,9 @@ inline ws softwareVersionFromSourceFilename(const ws& raw, const ws& brand = L""
       if ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z')) hasAlpha = true;
     }
     if (!hasDigit) continue;
+    // Hexadecimal addresses/sizes such as 0x200000 ("stock file_0x00_0x200000.bin")
+    // describe the dump range, not the calibration.
+    if (low.size() > 2 && low[0] == L'0' && low[1] == L'x') continue;
     // Ignore engine displacement/power fragments such as 1.4T and 120Ps.
     if (low.size() >= 2 && (low.substr(low.size()-2) == L"ps" ||
                             low.substr(low.size()-2) == L"hp" ||
@@ -1493,9 +1741,14 @@ inline ws softwareVersionFromSourceFilename(const ws& raw, const ws& brand = L""
   }
   return best;
 }
-inline ws scanEmbeddedHexFilename(const uint8_t* d,size_t n) {
+// Collects candidate embedded source filenames (".bin", ".hex", ...) from
+// ANSI and UTF-16LE strings in d[0, n). `romStrict` is used for the ROM image:
+// there only the plain-ASCII tail of a basename is kept, because random ROM
+// bytes often form ".hex"-looking junk such as "c\x20ac\x00d4X\x00be.Hex".
+using SourceCandidate = std::pair<int, ws>;
+inline void collectEmbeddedHexCandidates(const uint8_t* d, size_t n, bool romStrict,
+                                         std::vector<SourceCandidate>& candidates) {
   static const std::vector<ws> exts={L".bin",L".hex",L".rom",L".mot",L".s19",L".srec",L".ori",L".eep",L".epr",L".dat",L".frf",L".sgo",L".odx",L".vbf",L".flash"};
-  std::vector<std::pair<int,ws>> candidates;
   auto collectRun=[&](const ws& run) {
     if(run.empty()||run.size()>8192)return;
     for(size_t i=0;i<run.size();++i) {
@@ -1512,6 +1765,12 @@ inline ws scanEmbeddedHexFilename(const uint8_t* d,size_t n) {
         ws base=jsTrim(run.substr(b,i+ext.size()-b));
         size_t sep=base.find_last_of(L"\\/");
         if(sep!=ws::npos)base=base.substr(sep+1);
+        if(romStrict) {
+          // Keep only the trailing plain-ASCII part: "\x00ff\x00ff..CAFT5F04.DAT" -> "CAFT5F04.DAT".
+          size_t keep=base.size();
+          while(keep>0&&base[keep-1]<0x80)--keep;
+          base=jsTrim(base.substr(keep));
+        }
         ws stem=softwareStemFromSourceFilename(base);
         if(stem.empty())continue;
         int score=1+(stem.find_first_of(L"0123456789")!=ws::npos?2:0)+
@@ -1523,45 +1782,123 @@ inline ws scanEmbeddedHexFilename(const uint8_t* d,size_t n) {
       }
     }
   };
+  // A filename needs '.' followed by the first letter of a known extension.
+  // Map descriptions are full of plain sentences, so test that before decoding.
+  auto extStart=[](uint8_t c) {
+    c=(uint8_t)(c|0x20);
+    return c=='b'||c=='h'||c=='r'||c=='m'||c=='s'||c=='o'||c=='e'||c=='d'||c=='f'||c=='v';
+  };
+  auto mayHoldFilename=[&](const uint8_t* s,size_t len) {
+    const uint8_t* end=s+len;
+    for(const uint8_t* q=s;q<end;) {
+      const void* dot=std::memchr(q,'.',(size_t)(end-q));
+      if(!dot)return false;
+      const uint8_t* at=static_cast<const uint8_t*>(dot);
+      if(at+1<end&&extStart(at[1]))return true;
+      q=at+1;
+    }
+    return false;
+  };
   // ANSI/Windows-1252 strings (the normal WinOLS metadata encoding).
   size_t p=0;
   while(p<n) {
     while(p<n&&(d[p]<0x20||d[p]==0x7f))++p;
     size_t begin=p;
     while(p<n&&d[p]>=0x20&&d[p]!=0x7f)++p;
-    if(p>begin&&p-begin<=8192)collectRun(decode(d+begin,p-begin));
+    if(p>begin&&p-begin<=8192&&mayHoldFilename(d+begin,p-begin))collectRun(decode(d+begin,p-begin));
   }
   // UTF-16LE ASCII/Latin-1 runs can occur in imported metadata and embedded paths.
   p=0;
   while(p+1<n) {
     while(p+1<n&&!(d[p]>=0x20&&d[p]!=0x7f&&d[p+1]==0))++p;
-    size_t begin=p;ws run;
+    size_t begin=p;ws run;bool dot=false;
     while(p+1<n&&d[p]>=0x20&&d[p]!=0x7f&&d[p+1]==0) {
+      if(d[p]=='.'&&p+2<n&&extStart(d[p+2]))dot=true;
       run+=cp1252(d[p]);p+=2;
       if(run.size()>8192)break;
     }
-    if(!run.empty())collectRun(run);
+    if(!run.empty()&&dot)collectRun(run);
     if(p==begin)++p;
   }
-  std::sort(candidates.begin(),candidates.end(),[](const auto&a,const auto&b){
+}
+inline ws bestEmbeddedHexCandidate(std::vector<SourceCandidate>& candidates) {
+  // Stable: on equal score/length the earliest (map/ID area) candidate wins.
+  std::stable_sort(candidates.begin(),candidates.end(),[](const auto&a,const auto&b){
     return a.first!=b.first?a.first>b.first:a.second.size()<b.second.size();
   });
   return candidates.empty()?ws():candidates.front().second;
 }
+inline ws scanEmbeddedHexFilename(const uint8_t* d,size_t n) {
+  std::vector<SourceCandidate> candidates;
+  collectEmbeddedHexCandidates(d,n,false,candidates);
+  return bestEmbeddedHexCandidate(candidates);
+}
+// Map/ID area first, then the first embedded ROM image with the strict filter.
+inline ws scanEmbeddedHexFilename(const uint8_t* d,size_t headerEnd,size_t romBegin,size_t romEnd) {
+  std::vector<SourceCandidate> candidates;
+  collectEmbeddedHexCandidates(d,headerEnd,false,candidates);
+  if(romEnd>romBegin)collectEmbeddedHexCandidates(d+romBegin,romEnd-romBegin,true,candidates);
+  return bestEmbeddedHexCandidate(candidates);
+}
 inline ws selectSourceFilename(const ws& original,const ws& scanned) {
   return !softwareStemFromSourceFilename(original).empty()?original:scanned;
 }
-inline ws inferEcuFamily(const uint8_t* d,size_t n) {
-  ws text=decode(d,n);
+struct FamilyHit { ws value; size_t offset; int score; };
+
+// Finds ECU-family strings such as EDC17CP02, ME7.5 or SIMOS 18.1 in d[0, n).
+// Semantics are those of running the family regex over decode(d, n) (NUL bytes
+// dropped, CP1252), but the regex only runs where a cheap byte test shows that
+// a family prefix followed by a digit starts, instead of decoding and regex-
+// scanning multi-megabyte projects. `offsetBase` is added to hit offsets;
+// `requireUpperPrefix` (ROM image) rejects mixed-case junk such as "dCM2".
+inline void collectEcuFamilyHits(const uint8_t* d, size_t n, size_t offsetBase,
+                                 bool requireUpperPrefix, std::vector<FamilyHit>& hits) {
+  if (!d || n == 0) return;
   // Only real ECU-family model prefixes. Manufacturer names (Denso, Keihin,
   // Temic, Kefico, Transtron) are not families. A digit must follow the
   // prefix (optionally after one separator) so short prefixes such as ME
   // cannot match prose or random tokens such as "Me-b1G".
   static const std::wregex re(LR"(\b(?:ME|MED|EDC|DCM|SID|SIMOS|MD1|MG1|EMS|PCR|PSG|DCU|MSS|DDE|MSD|MSV|MJD|IAW|MOTRONIC)\s*[-.]?\s*\d[A-Z0-9.]{0,12}(?:[.-][A-Z0-9]{1,8}){0,2}\b)",std::regex::ECMAScript|std::regex::icase);
-  struct Hit { ws value; size_t offset; int score; };
-  std::vector<Hit> hits;
-  for(std::wsregex_iterator it(text.begin(),text.end(),re),end;it!=end;++it) {
-    ws x=jsTrim((*it)[0].str());
+  static const char* const prefixes[] = {"ME", "MED", "EDC", "DCM", "SID", "SIMOS", "MD1", "MG1", "EMS",
+                                         "PCR", "PSG", "DCU", "MSS", "DDE", "MSD", "MSV", "MJD", "IAW",
+                                         "MOTRONIC"};
+  // NUL bytes are dropped by decode(); work on the compacted byte stream.
+  std::string text;
+  text.reserve(n);
+  for (size_t i = 0; i < n; ++i)
+    if (d[i] != 0) text += static_cast<char>(d[i]);
+  const size_t m = text.size();
+  auto up = [](unsigned char c) -> unsigned char { return (c >= 'a' && c <= 'z') ? c - 32 : c; };
+  // Superset of what std::regex may treat as \s / \d after CP1252 decoding.
+  auto space = [](unsigned char c) { return c == ' ' || (c >= 9 && c <= 13) || c == 0xa0; };
+  auto digit = [](unsigned char c) { return (c >= '0' && c <= '9') || c == 0xb2 || c == 0xb3 || c == 0xb9; };
+  size_t resumeAt = 0;  // like regex_iterator: matches never overlap
+  for (size_t i = 0; i < m; ++i) {
+    if (i < resumeAt) continue;
+    const unsigned char c0 = up(static_cast<unsigned char>(text[i]));
+    if (c0 != 'M' && c0 != 'E' && c0 != 'D' && c0 != 'S' && c0 != 'P' && c0 != 'I') continue;
+    size_t digitAt = std::string::npos;
+    for (const char* prefix : prefixes) {
+      size_t k = 0, j = i;
+      while (prefix[k] && j < m && up(static_cast<unsigned char>(text[j])) == (unsigned char)prefix[k]) { ++k; ++j; }
+      if (prefix[k]) continue;
+      while (j < m && space(static_cast<unsigned char>(text[j]))) ++j;
+      if (j < m && (text[j] == '-' || text[j] == '.')) ++j;
+      while (j < m && space(static_cast<unsigned char>(text[j]))) ++j;
+      if (j < m && digit(static_cast<unsigned char>(text[j]))) { digitAt = std::max(digitAt == std::string::npos ? 0 : digitAt, j); }
+    }
+    if (digitAt == std::string::npos) continue;
+    // Decode a window: one char of look-behind for \b, the longest possible tail.
+    const size_t from = i > 0 ? i - 1 : 0;
+    const size_t to = std::min(m, digitAt + 64);
+    ws window = decode(reinterpret_cast<const uint8_t*>(text.data()) + from, to - from);
+    std::wsmatch match;
+    auto flags = std::regex_constants::match_continuous;
+    if (i > 0) flags |= std::regex_constants::match_prev_avail;
+    if (!std::regex_search(window.cbegin() + (i - from), window.cend(), match, re, flags)) continue;
+    resumeAt = i + (size_t)match.length(0);
+    if (match.length(0) == 0) resumeAt = i + 1;
+    ws x = jsTrim(match[0].str());
     // Reject alphabetic prose such as German "Meine", which can match the "ME" prefix.
     if(x.size()<4||x.size()>32||x.find_first_of(L"0123456789")==ws::npos)continue;
     // Short ME-family hits with a digit immediately followed by a letter
@@ -1570,31 +1907,59 @@ inline ws inferEcuFamily(const uint8_t* d,size_t n) {
     ws lowX=lower(x);
     if(lowX.rfind(L"me",0)==0&&lowX.rfind(L"med",0)!=0&&x.size()<=8){
       bool digitThenLetter=false;
-      for(size_t i=0;i+1<x.size();++i){
-        if((x[i]>=L'0'&&x[i]<=L'9')&&
-           ((x[i+1]>=L'A'&&x[i+1]<=L'Z')||(x[i+1]>=L'a'&&x[i+1]<=L'z'))){
+      for(size_t q=0;q+1<x.size();++q){
+        if((x[q]>=L'0'&&x[q]<=L'9')&&
+           ((x[q+1]>=L'A'&&x[q+1]<=L'Z')||(x[q+1]>=L'a'&&x[q+1]<=L'z'))){
           digitThenLetter=true;break;
         }
       }
       if(digitThenLetter)continue;
     }
-    ws nrm=lower(x);
+    if (requireUpperPrefix) {
+      bool upper = true;
+      for (wchar_t ch : x) {
+        if (!((ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z'))) break;
+        if (ch >= L'a' && ch <= L'z') { upper = false; break; }
+      }
+      if (!upper) continue;
+    }
+    ws nrm=lowX;
     int score=10;
     if(nrm.find(L'.')!=ws::npos)score+=4;
     if(nrm.find(L'-')!=ws::npos)score+=1;
-    static const std::vector<ws> prefixes={L"motronic",L"simos",L"med",L"edc",L"dcm",L"sid",L"md1",L"mg1",L"ems",L"pcr",L"psg",L"dcu",L"mss",L"dde",L"msd",L"msv",L"mjd",L"iaw",L"me"};
-    for(const auto& prefix:prefixes)if(nrm.rfind(prefix,0)==0){score+=(int)prefix.size();break;}
-    hits.push_back({x,(size_t)(*it).position(),score});
+    static const std::vector<ws> fp={L"motronic",L"simos",L"med",L"edc",L"dcm",L"sid",L"md1",L"mg1",L"ems",L"pcr",L"psg",L"dcu",L"mss",L"dde",L"msd",L"msv",L"mjd",L"iaw",L"me"};
+    for(const auto& prefix:fp)if(nrm.rfind(prefix,0)==0){score+=(int)prefix.size();break;}
+    hits.push_back({x,offsetBase+i,score});
   }
-  std::sort(hits.begin(),hits.end(),[](const Hit&a,const Hit&b) {
+}
+inline ws bestEcuFamily(std::vector<FamilyHit>& hits) {
+  std::sort(hits.begin(),hits.end(),[](const FamilyHit&a,const FamilyHit&b) {
     if(a.score!=b.score)return a.score>b.score;
     if(a.offset!=b.offset)return a.offset<b.offset;
     return a.value.size()>b.value.size();
   });
   return hits.empty()?ws():hits.front().value;
 }
-inline Analysis analyzeOls(const uint8_t* d, size_t n) {
+inline ws inferEcuFamily(const uint8_t* d,size_t n) {
+  std::vector<FamilyHit> hits;
+  collectEcuFamilyHits(d,n,0,false,hits);
+  return bestEcuFamily(hits);
+}
+// Map/ID area first, then the first embedded ROM image (strict upper-case prefix).
+inline ws inferEcuFamily(const uint8_t* d,size_t headerEnd,size_t romBegin,size_t romEnd) {
+  std::vector<FamilyHit> hits;
+  collectEcuFamilyHits(d,headerEnd,0,false,hits);
+  if(romEnd>romBegin)collectEcuFamilyHits(d+romBegin,romEnd-romBegin,headerEnd,true,hits);
+  return bestEcuFamily(hits);
+}
+// `loaded` leading bytes of a `fileSize`-byte project are in memory (see
+// requiredLoadLength). Map finding reads only the map/ID area before the ROM
+// version array; identity fallbacks may also read the first ROM image.
+inline Analysis analyzeOls(const uint8_t* d, size_t loaded, uint64_t fileSize) {
+  const size_t n = loaded;
   Analysis a;
+  a.fileSize = fileSize;
+  a.bytesLoaded = loaded;
   a.proposed = proposedFilename(L"Unknown", L"Unknown", L"Unknown", L"", 0);
   auto fail = [&](const wchar_t* e) {
     a.ok = false;
@@ -1609,7 +1974,7 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   if (d[15] != 0) return fail(L"Header signature is not terminated.");
 
   uint32_t formatVersion=rd32(d,16);bool modern=formatVersion>=200;
-  a.formatSizeConsistent=!modern||rd32(d,20)==n;
+  a.formatSizeConsistent=!modern||rd32(d,20)==fileSize;
   if(!a.formatSizeConsistent)a.warnings.push_back(L"Header size does not match file size; automatic renaming is disabled.");
   Meta meta=parseMetadata(d,n,modern?0x18:0x14,formatVersion,a.warnings);
   auto get=[&](const char*k){auto it=meta.find(k);return it==meta.end()?ws():it->second;};
@@ -1618,14 +1983,35 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   for(const auto& kv:meta) {
     if(!kv.first.empty()&&kv.first[0]!='_')a.metadata.push_back({fromAscii(kv.first.c_str()),kv.second});
   }
+  // Fast map finding: locate the boundary between the map/ID area and the
+  // embedded ECU ROM images first, so every later scan can be bounded by it.
+  VersionDirectory versionDirectory;
+  a.versionDirectoryValid=locateVersionDirectory(d,n,fileSize,versionDirectory);
+  if(!a.versionDirectoryValid&&n<fileSize) {
+    // The boundary is unproven in the loaded prefix: the caller must load the
+    // whole file (requiredLoadLength already asks for it; this is a guard).
+    a.needsFullFile=true;
+    return fail(L"Map area boundary not found in the loaded prefix; the whole file is required.");
+  }
+  size_t headerEnd=n, romBegin=0, romEnd=0;
+  if(a.versionDirectoryValid) {
+    headerEnd=std::min(n,versionDirectory.dataStart);
+    romBegin=std::min(n,versionDirectory.dataStart+4);
+    romEnd=(size_t)std::min<uint64_t>(n,(uint64_t)versionDirectory.dataStart+4u+versionDirectory.recordSize);
+    a.mapAreaEnd=versionDirectory.dataStart;
+    a.romImageStart=romBegin;
+    a.romImageEnd=romEnd;
+  }
+  auto scanSource=[&](){return a.versionDirectoryValid?scanEmbeddedHexFilename(d,headerEnd,romBegin,romEnd):scanEmbeddedHexFilename(d,n);};
+  auto scanFamily=[&](){return a.versionDirectoryValid?inferEcuFamily(d,headerEnd,romBegin,romEnd):inferEcuFamily(d,n);};
   ws original=get("original_file_name");
-  ws scannedSource=softwareStemFromSourceFilename(original).empty()?scanEmbeddedHexFilename(d,n):ws();
+  ws scannedSource=softwareStemFromSourceFilename(original).empty()?scanSource():ws();
   ws embedded=selectSourceFilename(original,scannedSource);
   ws rawBrand=firstFilled({get("make")});
   ws inferredBrand=rawBrand.empty()?inferVehicleBrandFromText(embedded):ws(L"Unknown");
   ws brand=!rawBrand.empty()?normalizeVehicleBrand(rawBrand):(!inferredBrand.empty()&&inferredBrand!=L"Unknown"?inferredBrand:ws(L"Unknown"));
   ws model=firstFilled({get("model"),get("type"),get("engine_code")});if(model.empty())model=L"Unknown";
-  ws explicitEcu=firstFilled({get("ecu_name")});ws inferredEcu=explicitEcu.empty()?inferEcuFamily(d,n):ws();
+  ws explicitEcu=firstFilled({get("ecu_name")});ws inferredEcu=explicitEcu.empty()?scanFamily():ws();
   ws ecu=!explicitEcu.empty()?explicitEcu:(!inferredEcu.empty()?inferredEcu:ws(L"Unknown"));
   // When no ECU family is known, the hardware number is a useful identity
   // token (e.g. Bosch 038906012L, Denso 89663-26432). Prefer it over leaving
@@ -1657,8 +2043,6 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   ws embeddedSoftware=softwareVersionFromSourceFilename(embedded,brand,model,ecu,get("production_no"),get("hw_number"));
   bool useFallback=!embeddedSoftware.empty()&&(generic||boschPart);
   ws software=useFallback?embeddedSoftware:metadataSoftware;
-  VersionDirectory versionDirectory;
-  a.versionDirectoryValid=locateVersionDirectory(d,n,versionDirectory);
   if(a.versionDirectoryValid) {
     a.versionCount=versionDirectory.count;
     a.versionDataStart=versionDirectory.dataStart;
@@ -1679,6 +2063,7 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
     a.mapDetails.push_back({m.name,m.description,m.defined});
   }
   a.skippedCount=(int)ex.maps.size()-a.definedCount;a.mapSource=ex.source;
+  a.mapDirectoryOffset=ex.offset;
   a.proposed=proposedFilename(brand,model,ecu,software,a.definedCount);
   const bool hasAnyIdentity = !isUnknownNamePart(brand) || !isUnknownNamePart(model) || !isUnknownNamePart(ecu) || !isUnknownNamePart(software);
    const bool scannedMapEvidence = ex.source=="scanned map directory" && (a.mapCount>=10 || a.definedCount>0);
@@ -1690,5 +2075,7 @@ inline Analysis analyzeOls(const uint8_t* d, size_t n) {
   if(!a.renameSafe)a.warnings.push_back(L"Identity or structured map-directory evidence is incomplete; automatic rename is disabled.");
   return a;
 }
+
+inline Analysis analyzeOls(const uint8_t* d, size_t n) { return analyzeOls(d, n, n); }
 
 }  // namespace ols

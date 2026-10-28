@@ -119,7 +119,23 @@ inline bool scanFolder(Scan& sc, ws root, bool recursive, std::atomic<bool>& can
   return true;
 }
 
-inline bool readFile(const ws& path, ols::Bytes& out, ws& err) {
+inline bool readExactly(HANDLE h, uint8_t* dst, size_t count) {
+  size_t got = 0;
+  while (got < count) {
+    DWORD n = 0;
+    if (!ReadFile(h, dst + got, (DWORD)std::min<size_t>(count - got, 1 << 24), &n, nullptr) || n == 0)
+      return false;
+    got += n;
+  }
+  return true;
+}
+
+// Fast map finding loader. Reads the first 1 MiB, asks the core where the
+// map/ID area ends (M1 version_data_start) and keeps reading only until the
+// map area plus the first embedded ROM image are in memory. Later ROM versions
+// (tuned copies) are never read. Whenever the boundary cannot be proven the
+// loader falls back to the whole file, so results match a full read.
+inline bool readProject(const ws& path, ols::Bytes& out, uint64_t& fileSize, ws& err) {
   HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                          nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
@@ -132,22 +148,72 @@ inline bool readFile(const ws& path, ols::Bytes& out, ws& err) {
     err = L"File is larger than 1 GB.";
     return false;
   }
-  out.resize((size_t)sz.QuadPart);
-  size_t got = 0;
-  while (got < out.size()) {
-    DWORD n = 0;
-    if (!ReadFile(h, out.data() + got, (DWORD)std::min<size_t>(out.size() - got, 1 << 24), &n, nullptr) ||
-        n == 0)
-      break;
-    got += n;
+  fileSize = (uint64_t)sz.QuadPart;
+  size_t loaded = (size_t)std::min<uint64_t>(fileSize, ols::kInitialLoadBytes);
+  out.resize(loaded);
+  bool ok = readExactly(h, out.data(), loaded);
+  for (int round = 0; ok && round < 6 && loaded < fileSize; ++round) {
+    const uint64_t need = ols::requiredLoadLength(out.data(), loaded, fileSize);
+    if (need <= loaded) break;
+    out.resize((size_t)need);
+    ok = readExactly(h, out.data() + loaded, (size_t)need - loaded);
+    loaded = (size_t)need;
   }
   CloseHandle(h);
-  if (got != out.size()) {
+  if (!ok) {
     err = L"The file could not be read completely.";
     return false;
   }
   return true;
 }
+
+inline bool readFile(const ws& path, ols::Bytes& out, ws& err) {
+  uint64_t fileSize = 0;
+  HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+  if (h == INVALID_HANDLE_VALUE) {
+    err = lastError(GetLastError());
+    return false;
+  }
+  LARGE_INTEGER sz;
+  if (!GetFileSizeEx(h, &sz) || sz.QuadPart > (1LL << 30)) {
+    CloseHandle(h);
+    err = L"File is larger than 1 GB.";
+    return false;
+  }
+  fileSize = (uint64_t)sz.QuadPart;
+  out.resize((size_t)fileSize);
+  const bool ok = readExactly(h, out.data(), out.size());
+  CloseHandle(h);
+  if (!ok) {
+    err = L"The file could not be read completely.";
+    return false;
+  }
+  return true;
+}
+
+// Analysis workers. Parsing is CPU-bound once files come from an SSD, so use
+// every logical processor (16 on a Ryzen 7 7800X3D / 7700X: 8 cores, SMT),
+// capped by memory: a worker can hold a large project buffer plus parsed map
+// records (~256 MiB worst case seen in the corpus), and at most half of the
+// currently free RAM is committed to the pool.
+inline size_t analysisWorkerCount(size_t total) {
+  if (total == 0) return 0;
+  const unsigned logical = std::max(1u, std::thread::hardware_concurrency());
+  size_t workers = std::min<size_t>(logical, 32);
+  MEMORYSTATUSEX mem{};
+  mem.dwLength = sizeof(mem);
+  if (GlobalMemoryStatusEx(&mem)) {
+    const unsigned long long perWorker = 256ull << 20;
+    const unsigned long long byMemory = std::max<unsigned long long>(1, (mem.ullAvailPhys / 2) / perWorker);
+    workers = (size_t)std::min<unsigned long long>(workers, byMemory);
+  }
+  return std::max<size_t>(1, std::min(workers, total));
+}
+
+// The detail dialog shows the first records only; keep that many per project
+// so a 4,000-project scan does not hold millions of map labels in memory.
+static constexpr size_t kStoredMapDetails = 40;
 
 inline ws mapWarning(const ols::Analysis& a) {
   for (const ws& w : a.warnings)
@@ -161,28 +227,39 @@ inline void analyzeAll(Scan& sc, std::atomic<bool>& cancel,
   const size_t total = sc.items.size();
   if (total == 0) { progress(0, 0); return; }
 
-  // A small bounded pool improves throughput on databases with thousands of
-  // files, especially when storage latency dominates. Keep the cap low so
-  // multiple large OLS files do not create unbounded memory pressure.
-  const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
-  const size_t workerCount = std::min<size_t>(total, std::min<unsigned>(4u, hw));
+  const size_t workerCount = analysisWorkerCount(total);
   std::atomic<size_t> next{0};
   size_t completed = 0;  // guarded by progressMutex
   std::mutex progressMutex;
 
   auto worker = [&]() {
+    // Keep the window responsive while every core is busy parsing.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    ols::Bytes data;  // reused per worker to avoid re-allocating large buffers
     while (!cancel.load()) {
       const size_t i = next.fetch_add(1);
       if (i >= total) break;
       Item& it = sc.items[i];  // each index is claimed by exactly one worker
-      ols::Bytes data;
       ws err;
-      if (!readFile(it.path(), data, err)) {
+      uint64_t fileSize = 0;
+      bool readOk = readProject(it.path(), data, fileSize, err);
+      if (readOk) {
+        it.a = ols::analyzeOls(data.data(), data.size(), fileSize);
+        if (it.a.needsFullFile) {  // boundary unproven in the prefix: use the whole file
+          readOk = readFile(it.path(), data, err);
+          if (readOk) it.a = ols::analyzeOls(data.data(), data.size());
+        }
+      }
+      if (data.capacity() > (64u << 20)) ols::Bytes().swap(data);  // don't pin huge buffers
+      if (!readOk) {
         it.a.ok = false;
         it.status = L"Cannot read: " + err;
         it.failed = true;
       } else {
-        it.a = ols::analyzeOls(data.data(), data.size());
+        if (it.a.mapDetails.size() > kStoredMapDetails) {
+          it.a.mapDetails.resize(kStoredMapDetails);
+          it.a.mapDetails.shrink_to_fit();
+        }
         it.read = true;
         if (it.a.ok) {
           it.mapsText = std::to_wstring(it.a.definedCount);
@@ -235,6 +312,18 @@ inline ws preserveOriginalNameForPartialIdentity(const Item& it) {
     return a.proposed;
   ws base = proposed.substr(0, suffixAt);
   ws suffix = proposed.substr(suffixAt);
+  // A stem this tool produced earlier ends with its own map-count suffix,
+  // e.g. "Chrysler Voyager 0281010814 (17)". Drop it before comparing, so a
+  // re-scan does not nest the old name: "... [Chrysler Voyager ... (17)] (17)".
+  {
+    const size_t open = originalStem.rfind(L" (");
+    if (open != ws::npos && originalStem.size() > open + 3 && originalStem.back() == L')') {
+      const ws inner = originalStem.substr(open + 2, originalStem.size() - open - 3);
+      const bool count = inner == L"Nil" ||
+          (!inner.empty() && std::all_of(inner.begin(), inner.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }));
+      if (count) originalStem.resize(open);
+    }
+  }
   ws fallback = ols::filenamePart(originalStem);
   if (fallback.empty()) return a.proposed;
   if (base.empty()) base = fallback;
@@ -317,7 +406,10 @@ inline bool writeRecoveryJournal(const Scan& sc, ws& outPath) {
 }
 
 // Renames in passes so chains (A->B while B->C) work; breaks swaps through a temp name.
-inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progress) {
+// saveLogs=false skips the CSV recovery plan (and its per-move events); the
+// caller also skips writeLog. Renaming itself is unchanged.
+inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progress,
+                      bool saveLogs = true) {
   struct P {
     size_t idx;
     ws cur;
@@ -374,7 +466,9 @@ inline void renameAll(Scan& sc, const std::function<void(size_t, size_t)>& progr
       for(auto& p:pend) if(!p.done) finish(p,false,L"preflight failed; no files were moved: "+preflightError);
       return;
     }
-    if(!writeRecoveryJournal(sc,sc.journalPath)) {
+    if(!saveLogs) {
+      sc.journalPath.clear();
+    } else if(!writeRecoveryJournal(sc,sc.journalPath)) {
       for(auto& p:pend) if(!p.done) finish(p,false,L"recovery plan could not be written; no files were moved");
       return;
     }

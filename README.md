@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.3.18
+# OhlsNamer (OLS Renamer) — v1.4.0
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
@@ -18,21 +18,39 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 - Disambiguates collisions inside each folder
 - Keeps malformed headers and unvalidated map structures review-only; partial-identity proposals omit unknown placeholders and retain the original filename stem
 - Renames in-place with a multi-pass algorithm that handles swaps and cycles via temporary names
-- Writes a CSV log of the renames
+- Writes a CSV log and recovery plan of the renames (can be switched off with **Save rename logs (CSV)**)
 - Drag-and-drop a folder or file onto the window
 - Cancelable scan
 - Recent-directory dropdown remembers the last 10 successful scan folders
 - Live result filtering by filename, vehicle/ECU identity and status
 - “Only rename candidates” view for quickly reviewing large databases
-- Bounded parallel analysis (up to four workers) for better throughput on large collections
+- Parallel analysis on every logical processor (16 workers on a Ryzen 7 7800X3D/7700X), capped by free memory
+- Fast map finding: reads and scans only the map/ID area of each project, plus the first ROM image for identity strings
 - Restores the last-used directory and recursive-scan preference between launches
 - Double-click a project to inspect parsed header fields, identity sources, map evidence and warnings
 
 ## Large database performance
 
-The analyzer uses a bounded pool of up to four workers and performs a fast candidate-byte search for map-directory markers. It also reuses the validated version directory and caches a per-process software-number regular expression. These changes reduce repeated work without weakening marker validation.
+**Fast map finding.** Every project has a map/ID area (metadata, map directory, map names) followed by the embedded ECU ROM images. The validated M1 version directory gives the exact boundary (`version_data_start`). The loader reads the first 1 MiB, proves the boundary, then reads only the map/ID area plus the first ROM image; later ROM versions (tuned copies) are never read. Map-directory search and map parsing never leave the map/ID area. If the boundary cannot be proven from the prefix, the whole file is read, so results never depend on the prefix size.
 
-For collections of 4,000+ projects, actual throughput still depends on OLS file sizes, disk type, compression, and the number of projects requiring full-file fallback scans. No fixed files-per-second claim is made without a representative benchmark. Peak memory should be measured before increasing worker count; each worker holds a project buffer and may allocate temporary parsing/decompression buffers.
+**Workers.** Analysis is CPU-bound once files come from an SSD, so the pool uses every logical processor (16 on an 8-core/16-thread Ryzen 7 7800X3D or 7700X). Each worker is budgeted 256 MiB (largest corpus project peaked at 195 MiB) and at most half of the free RAM is used, so low-memory machines get fewer workers. Workers run below normal priority to keep the window responsive.
+
+Measured on the 332-project corpus (AI-Dump `definitions/ols` + repository fixtures), single thread, analysis time only:
+
+| | v1.3.18 | v1.4.0 |
+|---|---:|---:|
+| Analysis CPU time | 108.1 s | 24.6 s |
+| Map-label classification | 59.1 s | 3.7 s |
+| ECU-family text scan (all files) | 224.3 s | 16.3 s |
+| Bytes read | 3.16 GB | 2.93 GB |
+
+Results with 1, 2 and 16 workers, and with prefix loading versus full reads, are byte-for-byte identical. The 16-worker figure on a 7800X3D was not benchmarked here (the test machine has 2 cores); expect scaling close to the physical core count.
+
+## Version 1.4.0
+
+- Counts valuable map names that importers store behind an ID-only name (`00004b0e`, `0x2`, `A0`, `n`, bare `Map`): 82,955 records in the corpus, e.g. Cummins CM2150E/CM2350A projects went from `(Nil)` to 5,631–14,867 maps.
+- Excludes more WinOLS-generated junk: statistics captions (`1700 =8192`, `G 2000x1317 =<666`), `Map "Float"`, bare supplier/type labels (`Bosch 16`, `"Bosch 8" ????`), question-mark placeholders, `DEFAULT` and single characters.
+- Fast map finding (map/ID area only), 4.4× faster analysis, workers sized to the CPU, and a **Save rename logs (CSV)** toggle.
 
 ## Version 1.3.18
 

@@ -19,6 +19,17 @@ int main(int argc, char** argv) {
            a.renameSafe ? "yes" : "no", a.mapCount, a.definedCount, a.skippedCount, a.mapSource.c_str(),
            a.formatVersion, a.versionCount, a.versionDirectoryValid ? "valid" : "invalid",
            a.versionDataStart, a.versionRecordSize, ols::utf8(a.proposed).c_str());
+    // Fast map finding: the map/ID area ends where the embedded ROM images start.
+    // needLoad is what the GUI loader reads (1 MiB first, grown on request).
+    uint64_t need = std::min<size_t>(data.size(), ols::kInitialLoadBytes);
+    for (int round = 0; round < 6; ++round) {
+      const uint64_t want = ols::requiredLoadLength(data.data(), (size_t)need, data.size());
+      if (want <= need) break;
+      need = want;
+    }
+    printf("  mapAreaEnd=0x%zx romImage=0x%zx-0x%zx mapDirectory=0x%zx needLoad=%llu of %zu bytes\n",
+           a.mapAreaEnd, a.romImageStart, a.romImageEnd, a.mapDirectoryOffset,
+           (unsigned long long)need, data.size());
     if (getenv("WARN"))
       for (auto& w : a.warnings) printf("  warn=%s\n", ols::utf8(w).c_str());
     // Opt-in corpus audit: expose labels excluded from the filename map count.

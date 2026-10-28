@@ -154,6 +154,92 @@ int main() {
   assert(isDefinedMap(L"Bosch torque limiter", L""));
   assert(isDefinedMap(L"", L"Kennfeld Denso injection quantity limiter"));
   assert(isDefinedMap(L"LDRXN", L"Bosch 16 bit. 16 x 16"));
+  // --- 1.4.0: valuable names behind ID-only map names (AI-Dump corpus: 82,955
+  // records, e.g. Cummins CM2150E/CM2350A and GM E69 projects were "(Nil)").
+  assert(isDefinedMap(L"00004b0e", L"C_DLC_10_Neg_Err_Low_Thd"));
+  assert(isDefinedMap(L"0x2", L"Mapp. for heater voltage as a funct. of exhaust emis. temp. and msabg"));
+  assert(isDefinedMap(L"0x3", L"map for calculation of nominal charge"));
+  assert(isDefinedMap(L"000065d1 / 000065d1", L"_Peak_Torque"));
+  assert(isDefinedMap(L"A0", L"\x00dc" L"bertragungsfunktionskoeffizient"));
+  assert(isDefinedMap(L"N0", L"Umrechnungskonstante f\x00fcr Einrechnung Gemischkorrektur rkat"));
+  assert(isDefinedMap(L"12345", L"Boost pressure limit"));
+  assert(isDefinedMap(L"map", L"Manifold air pressure"));
+  assert(isDefinedMap(L"n", L"Engine speed"));
+  // An ID name only borrows a description that is itself a real label.
+  assert(!isDefinedMap(L"00004b0e", L""));
+  assert(!isDefinedMap(L"00004b0e", L"Map \"Bosch II 16\""));
+  assert(!isDefinedMap(L"00004b0e", L"Hexdump"));
+  assert(!isDefinedMap(L"0x10", L"0x10"));
+  assert(!isDefinedMap(L"map", L"Kennfeld"));
+  // Generated supplier names still never borrow a description.
+  assert(!isDefinedMap(L"Denso Map", L"Torque limiter"));
+  assert(!isDefinedMap(L"Bosch map 2", L"Torque limiter"));
+  // Real labels stay authoritative over their descriptions.
+  assert(isDefinedMap(L"KFRI", L"I - Kennfeld"));
+  assert(isDefinedMap(L"NO1", L"obere Drehzahlschwelle Bereich 1"));
+  assert(isDefinedMap(L"N75", L""));
+  // --- 1.4.0: generated junk on its own is never counted.
+  for (const ws& junk : {
+           ws(L"Map"), ws(L"MAP"), ws(L"map"), ws(L"Kennfeld"), ws(L"KENNFELD"), ws(L"Kennlinie"),
+           ws(L"Map 1"), ws(L"Map #2"), ws(L"Map_3"), ws(L"Kennfeld 12"), ws(L"Kennlinie: 4"),
+           ws(L"Map \"Float\""), ws(L"Kennfeld 'Denso Float'"), ws(L"Map \"Bosch IV 16\" (!)"),
+           ws(L"Kennfeld \"Statistisch 16\""), ws(L"Bosch 16"), ws(L"Denso Float"), ws(L"\"Bosch 8\"  ????"),
+           ws(L"Bosch II 16/8"), ws(L"Map ???"), ws(L"???"), ws(L"V"), ws(L"DEFAULT"),
+           // WinOLS potential-map statistics captions
+           ws(L"1700 =8192"), ws(L"18000 =<204"), ws(L"6250 =9000/0"), ws(L"7500x120c =8192/0"),
+           ws(L"30000x5250 =8192"), ws(L"G 2000x1317 =<666"), ws(L"D 2000x1317 =<-110"),
+           ws(L"95% =0"), ws(L"10%"), ws(L"1300x140c =>3819"), ws(L"4500 =<-5000")}) {
+    assert(!isDefinedMap(L"", junk));
+    assert(!isDefinedMap(junk, L""));
+  }
+  // Human names that merely look technical stay countable.
+  for (const ws& human : {
+           ws(L"Lambda = 1 target"), ws(L"Boost limit 16x16"), ws(L"Map for nominal charge"),
+           ws(L"Kennfeld LDR-Sollwert"), ws(L"Kennlinie f\x00fcr Warmlauffaktor"),
+           ws(L"Bosch II torque limiter"), ws(L"Denso injection timing 16x16"),
+           ws(L"MAP sensor scaling"), ws(L"* Injector Duration Map 2"), ws(L"Torque 95%")}) {
+    assert(isDefinedMap(human, L""));
+    assert(isDefinedMap(L"", human));
+  }
+  // Classification is memoized per thread; repeated calls must agree.
+  for (int repeat = 0; repeat < 3; ++repeat) {
+    assert(isPlaceholderLabel(L"Map \"Bosch II 16\""));
+    assert(!isPlaceholderLabel(L"Mo_trqIdcMax_C"));
+  }
+  // Hex addresses/sizes in source filenames are not software IDs.
+  assert(softwareVersionFromSourceFilename(L"stock file_0x00_0x200000.bin", L"", L"", L"").empty());
+
+  // --- 1.4.0: fast ECU-family scanner keeps regex semantics.
+  auto familyOf = [](const std::string& text) {
+    Bytes b(text.begin(), text.end());
+    return inferEcuFamily(b.data(), b.size());
+  };
+  assert(familyOf("xx EDC16C31 yy") == L"EDC16C31");
+  assert(familyOf("abcEDC16C31") == L"");            // no word boundary
+  assert(familyOf("SIMOS 18.1 and ME7") == L"SIMOS 18.1");
+  assert(familyOf("ME 7.0 / me7.5") == L"ME 7.0");
+  assert(familyOf(std::string("E\0D\0C\0" "1\0" "7\0C\0" "4\0" "6\0", 16)) == L"EDC17C46");  // NULs dropped
+  assert(familyOf("MED17.7.2") == L"MED17.7.2");
+  // The ROM image only accepts upper-case family prefixes ("dCM2" is junk).
+  {
+    Bytes header(64, 0x20), rom = {'x', ' ', 'd', 'C', 'M', '2', ' ', 'E', 'D', 'C', '1', '5', 'C', '4', ' '};
+    Bytes all(header);
+    all.insert(all.end(), rom.begin(), rom.end());
+    assert(inferEcuFamily(all.data(), header.size(), header.size(), all.size()) == L"EDC15C4");
+    Bytes junkOnly(header);
+    for (char ch : std::string(" dCM2 edc5H Me9.0001 ")) junkOnly.push_back(static_cast<uint8_t>(ch));
+    assert(inferEcuFamily(junkOnly.data(), header.size(), header.size(), junkOnly.size()).empty());
+    assert(!inferEcuFamily(junkOnly.data(), junkOnly.size()).empty());  // whole-file mode is unchanged
+  }
+  // ROM-image source filenames keep only their ASCII tail.
+  {
+    std::string rom = "\xff\xff\xff\xff" "CAFT5F04.DAT\x01" "c\x80\xd4X\xbe.Hex\x01";
+    Bytes all(32, 0x01);
+    const size_t romBegin = all.size();
+    all.insert(all.end(), rom.begin(), rom.end());
+    assert(scanEmbeddedHexFilename(all.data(), romBegin, romBegin, all.size()) == L"CAFT5F04.DAT");
+  }
+
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
   assert(longName.size()<=240 && longName.find(L"(42).ols")!=ws::npos);
   assert(proposedFilename(L"BMW",L"320d",L"EDC17C46",L"",0).find(L"(Nil).ols")!=ws::npos);
@@ -296,6 +382,34 @@ int main() {
   assert(collisionVd.markerOffset == 64);
   assert(collisionVd.dataStart == 100 && collisionVd.count == 2);
 
+  // --- 1.4.0 fast map finding: only the map/ID area and first ROM image load.
+  {
+    Bytes project(1000, 0);
+    auto put = [&](size_t off, uint32_t value) {
+      for (int k = 0; k < 4; ++k) project[off + k] = static_cast<uint8_t>(value >> (8 * k));
+    };
+    put(52, 1); put(56, 200); put(60, 398); put(64, 0x42007899u);  // 2 versions of 398 bytes
+    put(200, 0x98728833u);                                         // M3 at version_data_start
+    // M3 not yet loaded: the boundary is unproven, ask for the M1 search window (whole file here).
+    assert(requiredLoadLength(project.data(), 150, project.size()) == project.size());
+    // M3 loaded and the array ends at EOF: map/ID area + first ROM image only.
+    assert(requiredLoadLength(project.data(), 300, project.size()) == 200u + 4u + 398u);
+    assert(requiredLoadLength(project.data(), 602, project.size()) == 602u);
+    VersionDirectory partialVd, fullVd;
+    assert(locateVersionDirectory(project.data(), 602, project.size(), partialVd));
+    assert(locateVersionDirectory(project.data(), project.size(), fullVd));
+    assert(partialVd.dataStart == fullVd.dataStart && partialVd.count == fullVd.count &&
+           partialVd.recordSize == fullVd.recordSize);
+    // A prefix without a provable boundary must request the whole file.
+    Bytes noBoundary(4096, 0);
+    noBoundary[0] = 0x0b;
+    std::memcpy(noBoundary.data() + 4, "WinOLS File", 11);
+    noBoundary[16] = 0xdf; noBoundary[17] = 0x01;  // format 479
+    const auto prefixOnly = analyzeOls(noBoundary.data(), 1024, noBoundary.size());
+    assert(!prefixOnly.ok && prefixOnly.needsFullFile);
+    assert(requiredLoadLength(noBoundary.data(), 1024, noBoundary.size()) == noBoundary.size());
+  }
+
   // A marker-shaped sequence deep in a large ROM must not trigger version-array
   // dispatch. The version directory is expected in the bounded serialized header.
   Bytes deepMarker(8u * 1024u * 1024u + 256u, 0);
@@ -356,5 +470,5 @@ int main() {
     if (!result.headerComplete) assert(!result.renameSafe);
   }
 
-  std::cout<<"core regression checks passed\\n";
+  std::cout<<"core regression checks passed\n";
 }

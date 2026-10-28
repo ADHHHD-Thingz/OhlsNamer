@@ -104,6 +104,14 @@ OhlsNamer now validates the M1 version directory before using it as a parsing bo
 
 This is a dispatch-boundary fix, not a complete semantic decoding of M1/M2. The independent parser calls `0x11883377` M2 a version-array dispatch marker, while OhlsNamer's existing map candidate logic treats the bytes after it as a possible compressed/count-prefixed map block. In the supplied format-479 sample, M2 is at `0x84E`, M1 at `0x5FE`, and the version array begins at `0x10740`; therefore M2 remains within the pre-ROM region and is still only a candidate marker. Its universal meaning and the corpus map-count disagreements remain unresolved.
 
+## 3.3 Map/ID area and fast map finding (v1.4.0)
+
+OhlsNamer treats `[0, version_data_start)` as the map/ID area (metadata, map directory, map names) and `[version_data_start + 4, version_data_start + 4 + version_record_size)` as the first embedded ROM image. The loader reads the first 1 MiB, locates M1 with arithmetic checked against the real file size, and then reads only up to the end of the first ROM image. It reads the whole file whenever the choice could change with more data: M1 not proven inside the prefix, M3 not yet readable, or a winning candidate that is not M3-corroborated with an array ending exactly at EOF (in that case the full 8 MiB M1 search window is loaded, as before).
+
+Corpus check (332 projects): prefix-loaded and full-file analyses produced identical names, map counts, verdicts and rename eligibility for every project. Map-marker search and map parsing are confined to the map/ID area. Identity fallbacks (ECU family, embedded source filename) may also read the first ROM image, because 17 projects carry their only ECU-family string there (e.g. `EDC16C31`, `ME7.1`); later ROM versions are ignored.
+
+This is an implementation boundary backed by the M1 evidence above, not a decoding of the ROM record contents.
+
 ## 4. Map records
 
 The current OhlsNamer parser extracts candidate map names/descriptions and counts non-placeholder labels. Exact supplier-only labels such as “Bosch map”, “Denso map” and “Siemens map” are treated as generic placeholders, not human-named maps. It is not a full calibration-map decoder. The independent parser attempts to decode map records, axes, cell types, scaling and ROM addresses.

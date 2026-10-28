@@ -13,7 +13,7 @@
 using ols::ws;
 
 enum {
-  ID_FOLDER = 101, ID_BROWSE, ID_SUB, ID_SCAN, ID_RENAME, ID_CANCEL, ID_LIST, ID_STATUS, ID_PROGRESS, ID_FILTER, ID_CHANGES
+  ID_FOLDER = 101, ID_BROWSE, ID_SUB, ID_SCAN, ID_RENAME, ID_CANCEL, ID_LIST, ID_STATUS, ID_PROGRESS, ID_FILTER, ID_CHANGES, ID_SAVELOG
 };
 enum {
   WM_SCAN_FOUND = WM_APP + 1,   // wParam = files found so far
@@ -25,7 +25,7 @@ enum {
 
 struct App {
   HWND hwnd = nullptr, edFolder, btnBrowse, chkSub, btnScan, btnRename, btnCancel, lblFolder, progress,
-       status, list, edFilter, chkChanges;
+       status, list, edFilter, chkChanges, chkSaveLog = nullptr;
   HFONT font = nullptr;
   int dpi = 96;
   std::vector<ws> recentDirs;
@@ -43,6 +43,12 @@ static int S(int v) { return MulDiv(v, app.dpi, 96); }
 
 static void setStatus(const ws& s) { SetWindowTextW(app.status, s.c_str()); }
 
+static ws hex(size_t v) {
+  wchar_t buf[32];
+  swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%llX", static_cast<unsigned long long>(v));
+  return buf;
+}
+
 static constexpr size_t kRecentDirectoryLimit = 10;
 static constexpr wchar_t kSettingsKey[] = L"Software\\OhlsNamer";
 
@@ -51,10 +57,10 @@ static bool readRegString(HKEY key, const wchar_t* name, ws& value) {
   if (RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytes) != ERROR_SUCCESS ||
       type != REG_SZ || bytes < sizeof(wchar_t) || bytes > 65536)
     return false;
-  std::vector<wchar_t> buffer(bytes / sizeof(wchar_t) + 1, L'\\0');
+  std::vector<wchar_t> buffer(bytes / sizeof(wchar_t) + 1, L'\0');
   if (RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE*>(buffer.data()), &bytes) != ERROR_SUCCESS)
     return false;
-  buffer.back() = L'\\0';
+  buffer.back() = L'\0';
   value = buffer.data();
   return !value.empty();
 }
@@ -77,6 +83,12 @@ static void loadSettings() {
                        reinterpret_cast<BYTE*>(&recursive), &bytes) == ERROR_SUCCESS &&
       type == REG_DWORD)
     SendMessageW(app.chkSub, BM_SETCHECK, recursive ? BST_CHECKED : BST_UNCHECKED, 0);
+  DWORD saveLogs = 1;
+  bytes = sizeof(DWORD);
+  if (RegQueryValueExW(key, L"SaveLogs", nullptr, &type, reinterpret_cast<BYTE*>(&saveLogs), &bytes) ==
+          ERROR_SUCCESS &&
+      type == REG_DWORD && app.chkSaveLog)
+    SendMessageW(app.chkSaveLog, BM_SETCHECK, saveLogs ? BST_CHECKED : BST_UNCHECKED, 0);
   RegCloseKey(key);
   SendMessageW(app.edFolder, CB_RESETCONTENT, 0, 0);
   for (const ws& path : app.recentDirs) SendMessageW(app.edFolder, CB_ADDSTRING, 0, (LPARAM)path.c_str());
@@ -93,6 +105,11 @@ static void saveSettings() {
   DWORD recursive = SendMessageW(app.chkSub, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1u : 0u;
   RegSetValueExW(key, L"IncludeSubfolders", 0, REG_DWORD,
                  reinterpret_cast<const BYTE*>(&recursive), sizeof(recursive));
+  if (app.chkSaveLog) {
+    DWORD saveLogs = SendMessageW(app.chkSaveLog, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1u : 0u;
+    RegSetValueExW(key, L"SaveLogs", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&saveLogs),
+                   sizeof(saveLogs));
+  }
   if (!app.lastDirectory.empty())
     RegSetValueExW(key, L"LastDirectory", 0, REG_SZ,
                    reinterpret_cast<const BYTE*>(app.lastDirectory.c_str()),
@@ -148,6 +165,7 @@ static void updateButtons() {
   EnableWindow(app.btnBrowse, !b);
   EnableWindow(app.edFolder, !b);
   EnableWindow(app.chkSub, !b);
+  if (app.chkSaveLog) EnableWindow(app.chkSaveLog, !b);
   EnableWindow(app.btnRename, !b && app.scanned && olsfs::renameCount(app.scan) > 0);
   EnableWindow(app.btnCancel, b && !app.renaming);
   if (app.edFilter) EnableWindow(app.edFilter, !b);
@@ -165,6 +183,7 @@ static void layout() {
   MoveWindow(app.edFolder, m + labelW, y, W - 2 * m - labelW - btnW - gap, rowH, TRUE);
   y += rowH + gap;
   MoveWindow(app.chkSub, m, y + S(3), S(150), rowH - S(4), TRUE);
+  MoveWindow(app.chkSaveLog, m + S(158), y + S(3), S(170), rowH - S(4), TRUE);
   int x = W - m - btnW;
   MoveWindow(app.btnCancel, x, y, btnW, rowH, TRUE);
   x -= btnW + gap + S(20);
@@ -279,11 +298,17 @@ static void startScan() {
   });
 }
 
+static bool saveLogsEnabled() {
+  return !app.chkSaveLog || SendMessageW(app.chkSaveLog, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
 static void startRename() {
   if (app.busy || olsfs::renameCount(app.scan) == 0) return;
+  const bool saveLogs = saveLogsEnabled();
   ws msg = L"Rename " + std::to_wstring(olsfs::renameCount(app.scan)) +
-           L" file(s) in place?\n\nThe files are renamed on disk and this cannot be undone automatically. "
-           L"A CSV log of the old and new names is saved in the folder.";
+           L" file(s) in place?\n\nThe files are renamed on disk and this cannot be undone automatically. " +
+           ws(saveLogs ? L"A recovery plan and a CSV log of the old and new names are saved in the folder."
+                       : L"Log saving is OFF: no recovery plan or CSV log will be written.");
   if (MessageBoxW(app.hwnd, msg.c_str(), L"OLS Renamer", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
     return;
   joinWorker();
@@ -294,9 +319,11 @@ static void startRename() {
   setStatus(L"Renaming...");
   updateButtons();
   HWND hwnd = app.hwnd;
-  app.worker = std::thread([hwnd]() {
-    olsfs::renameAll(app.scan, [hwnd](size_t d, size_t t) { PostMessageW(hwnd, WM_RENAME_PROGRESS, d, t); });
-    olsfs::writeLog(app.scan, app.lastLog);
+  app.lastLog.clear();
+  app.worker = std::thread([hwnd, saveLogs]() {
+    olsfs::renameAll(app.scan, [hwnd](size_t d, size_t t) { PostMessageW(hwnd, WM_RENAME_PROGRESS, d, t); },
+                     saveLogs);
+    if (saveLogs) olsfs::writeLog(app.scan, app.lastLog);
     PostMessageW(hwnd, WM_RENAME_DONE, 0, 0);
   });
 }
@@ -351,6 +378,9 @@ static LRESULT onNotify(LPNMHDR nh) {
         L"\nDefined maps: " + std::to_wstring(a.definedCount) +
         L"\nSkipped maps: " + std::to_wstring(a.skippedCount) +
         L"\nMap extraction source: " + ols::fromAscii(a.mapSource.c_str()) +
+        L"\nMap/ID area: 0x0-0x" + hex(a.mapAreaEnd) + L" (map directory at 0x" + hex(a.mapDirectoryOffset) + L")" +
+        L"\nFirst ROM image: 0x" + hex(a.romImageStart) + L"-0x" + hex(a.romImageEnd) +
+        L"\nBytes read: " + std::to_wstring(a.bytesLoaded) + L" of " + std::to_wstring(a.fileSize) +
         L"\nAutomatic rename safe: " + ws(a.renameSafe ? L"yes" : L"no") +
         L"\n\nProposed filename: " + a.proposed;
       if (!a.metadata.empty()) {
@@ -365,7 +395,7 @@ static LRESULT onNotify(LPNMHDR nh) {
           details += L"\n[" + ws(m.defined ? L"defined" : L"skipped") + L"] " + (m.name.empty() ? ws(L"(unnamed)") : m.name);
           if(!m.description.empty())details += L" — " + m.description;
         }
-        if(a.mapDetails.size()>shown)details += L"\n... and " + std::to_wstring(a.mapDetails.size()-shown) + L" more map records";
+        if(a.mapCount>shown)details += L"\n... and " + std::to_wstring(a.mapCount-shown) + L" more map records";
       }
       if (!a.warnings.empty()) {
         details += L"\n\nWarnings:";
@@ -429,6 +459,8 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       app.btnBrowse = mk(L"BUTTON", L"Browse...", WS_TABSTOP | BS_PUSHBUTTON, ID_BROWSE);
       app.chkSub = mk(L"BUTTON", L"Include subfolders", WS_TABSTOP | BS_AUTOCHECKBOX, ID_SUB);
       SendMessageW(app.chkSub, BM_SETCHECK, BST_CHECKED, 0);
+      app.chkSaveLog = mk(L"BUTTON", L"Save rename logs (CSV)", WS_TABSTOP | BS_AUTOCHECKBOX, ID_SAVELOG);
+      SendMessageW(app.chkSaveLog, BM_SETCHECK, BST_CHECKED, 0);
       loadSettings();
       app.btnScan = mk(L"BUTTON", L"Scan", WS_TABSTOP | BS_DEFPUSHBUTTON, ID_SCAN);
       app.btnRename = mk(L"BUTTON", L"Rename files", WS_TABSTOP | BS_PUSHBUTTON, ID_RENAME);
@@ -472,7 +504,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             if (selected != CB_ERR) {
               LRESULT length = SendMessageW(app.edFolder, CB_GETLBTEXTLEN, selected, 0);
               if (length > 0 && length < 32768) {
-                std::vector<wchar_t> path(static_cast<size_t>(length) + 1, L'\\0');
+                std::vector<wchar_t> path(static_cast<size_t>(length) + 1, L'\0');
                 SendMessageW(app.edFolder, CB_GETLBTEXT, selected, (LPARAM)path.data());
                 SetWindowTextW(app.edFolder, path.data());
               }
@@ -487,6 +519,9 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
           break;
         case ID_CHANGES:
           if (!app.busy) refreshList();
+          break;
+        case ID_SAVELOG:
+          if (HIWORD(w) == BN_CLICKED) saveSettings();
           break;
         case ID_CANCEL:
           app.cancel = true;
@@ -559,6 +594,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       ws s = summary();
       if (!app.lastLog.empty()) s += L"  |  log saved";
       if (!app.scan.journalPath.empty()) s += L"  |  recovery plan saved";
+      if (!saveLogsEnabled()) s += L"  |  log saving off";
       setStatus(s);
       refreshList();
       updateButtons();

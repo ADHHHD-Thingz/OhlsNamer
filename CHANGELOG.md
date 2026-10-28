@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.0
+
+Naming (verified against all 305 AI-Dump `definitions/ols` projects plus the 27 repository fixtures; 3.42M map records):
+- Count a map when its name is only a record ID (decimal/hex ID, address pair, one-letter index or symbol such as `00004b0e`, `0x1b2f / 0x1b2f`, `A0`, `N0`, `n`) or a bare record word (`Map`, `Kennfeld`) and the description is a real label. 82,955 previously skipped records are now counted; 11 projects (Cummins CM2150E/CM2220C/CM2350A, GM E69) no longer show `(Nil)`. Generated supplier names (`Denso Map`) still never borrow a description.
+- Exclude WinOLS potential-map statistics captions (`1700 =8192`, `7500x120c =8192/0`, `G 2000x1317 =<666`, `95% =0`, `10%`), quoted type labels without a supplier family (`Map "Float"`), bare supplier/type captions (`Bosch 16`, `Denso Float`, `"Bosch 8"  ????`), question-mark-only labels (`Map ???`, `???`), `DEFAULT` and single-character labels. 290 previously counted junk records are now excluded.
+- No other verdict changed across the corpus: the faster classifier reproduces every previous decision outside these rules.
+- Reject hexadecimal addresses/sizes (`0x200000`) as software IDs from source filenames.
+- ECU family and source-filename fallbacks scan the map/ID area and the first ROM image only. In the ROM image a family must use an upper-case prefix and a filename keeps only its ASCII tail, removing junk such as `dCM2`, `edc5H`, `Me9.0001` and `c€ÔX¾.Hex` while keeping real ROM IDs (`EDC16C31`, `ME7.1`, `CAFT5F04.DAT`).
+- Re-scanning files this tool already renamed no longer nests the old name, e.g. `Chrysler Voyager 0281010814 [Chrysler Voyager 0281010814 (17)] (17).ols`.
+
+Performance:
+- Fast map finding: the loader reads 1 MiB, proves the map/ID-area boundary (M1 `version_data_start`) and reads only the map/ID area plus the first ROM image. It falls back to a full read when the boundary is unproven; results are identical to full reads on the whole corpus.
+- Map-label classification gates every regex behind cheap necessary-condition tests and memoizes verdicts per worker thread (59.1 s → 3.7 s on the corpus).
+- ECU-family detection uses a byte prefilter and runs the unchanged regex only at candidate positions (224 s → 16 s whole-file; identical results on all 332 projects).
+- Source-filename scanning skips strings that cannot contain an extension.
+- Worker pool uses all logical processors (16 on a Ryzen 7 7800X3D/7700X) capped at half of free RAM / 256 MiB per worker, below-normal priority; buffers are reused per worker and only the 40 map records shown in the details dialog are kept per project.
+
+GUI:
+- New **Save rename logs (CSV)** checkbox (remembered between launches). When off, neither the recovery plan nor the rename log is written.
+- Details dialog shows the map/ID area, map-directory offset, first ROM image range and bytes read.
+- Fixed the multi-character `L'\\0'` literal used for registry/combo-box string termination.
+
+
 ## 1.3.18
 
 - Keep diagnostic trouble codes out of proposed filenames. Standard OBD codes such as `P0420`, `C0035` and `U0100` are rejected as software-version candidates and omitted from every filename slot.
