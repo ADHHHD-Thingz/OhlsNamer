@@ -15,8 +15,16 @@ fails=0
 fail() { echo "FAIL: $*"; fails=$((fails + 1)); }
 
 mkdir -p "$WORK/src/Sub Folder" "$WORK/arc"
+shopt -s nullglob
 cp "$ROOT"/olstest/*.ols "$WORK/src/"
-cp "$ROOT"/*.ols "$WORK/src/Sub Folder/" 2>/dev/null
+# Nested paths inside the archives: move a few fixtures into a subfolder.
+n=0
+for f in "$WORK"/src/*.ols; do
+  [ $n -lt 8 ] || break
+  mv "$f" "$WORK/src/Sub Folder/"
+  n=$((n + 1))
+done
+for f in "$ROOT"/*.ols; do cp "$f" "$WORK/src/Sub Folder/"; done
 echo "not a project" > "$WORK/src/readme.txt"
 (cd "$WORK/src" && find . -type f | sort | while read -r f; do sha256sum "$f"; done) > "$WORK/orig.sha"
 
