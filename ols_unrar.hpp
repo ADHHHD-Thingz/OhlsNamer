@@ -31,5 +31,18 @@ struct Callbacks {
 // call may still use UnRAR's own multi-threaded RAR5 decoder.
 bool streamEntries(const ws& archivePath, const Callbacks& cb, ws& error);
 
+// Header-only listing through UnRAR (RAR_OM_LIST: nothing is decoded, so it is
+// fast even for solid archives). Used when the built-in header walk refuses an
+// archive. Entries reached before an error are still delivered; the function
+// then returns false with the reason. volume=true for multi-volume sets
+// (their indices would not match streamEntries, so callers refuse them).
+struct ListResult {
+  bool volume = false;
+  bool solid = false;
+  size_t entries = 0;
+};
+bool listEntries(const ws& archivePath, const std::function<void(const EntryInfo&)>& entry, ListResult& result,
+                 ws& error);
+
 int libraryVersion();
 }  // namespace olsunrar

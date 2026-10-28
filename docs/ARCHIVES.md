@@ -15,6 +15,10 @@ Each project goes through `olsarc::PrefixCollector`, which follows the same load
 
 On the integration archives (27 fixture projects in each archive type), every in-archive map count equals the plain-file count.
 
+### Damaged or unusual RAR archives
+
+When the built-in header walk refuses a RAR archive (a broken header, a truncated file, or a zero-filled region such as an unfinished download), the archive is listed through UnRAR (`RAR_OM_LIST`, header-only) instead. Every project UnRAR can reach is analysed and can be extracted. The archive is read-only: renaming inside it is disabled. The scan warning names the offset and, for zero-filled data, the likely cause. Multi-volume sets are still refused.
+
 ## Extracting selected projects
 
 **Move / extract** and **Copy / extract** in the GUI write selected projects out of an archive. Each one is decoded straight into `<target>.olsrenamer-part` in the destination. A ZIP entry must then match its size and CRC-32; a RAR entry must pass UnRAR's CRC/BLAKE2 check. The file is renamed to the target only if the check passes, and never over an existing file. A failure or cancel removes the partial file, and the archive itself is never modified. ZIP projects are read by random access; a RAR archive is decoded in one sequential pass.

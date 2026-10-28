@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.4
+
+- **RAR archives the header check refuses are now read through UnRAR.** Errors such as "Bad RAR5 header size" or a header CRC mismatch used to drop the whole archive. Now the archive is listed through UnRAR instead, and every project UnRAR can reach is scanned, counted and extractable. Renaming inside such an archive is disabled (read-only), and the original is never modified.
+- **The error says where and why.** Header errors now give the byte offset and file size. When the archive is zero-filled from that point, which is what an unfinished download or copy of a large archive looks like, the message says so.
+- The scan warning dialog lists the first six warnings, not just the first, and no longer says folders "could not be scanned".
+- Verified:
+  - Damaged RAR5 archives with a broken header, a zeroed header, a truncated end or a zero-filled tail: every reachable project extracted byte-identical, and renaming was refused with the archive unchanged.
+  - 39 WinRAR 7 option variants (SFX, comments, file versions, quick-open, recovery record, locked, volumes, large dictionary) parse with the built-in reader.
+  - 300 mutated archives through scan and extract under ASan/UBSan: no findings.
+  - Wine run of the Windows build: scan, rename and extract.
+
 ## 1.5.3
 
 - **Fixed: extracting from a RAR (or rewritten ZIP) after renaming inside it.** The scan's archive listing was not refreshed after an in-archive rename. Extraction then asked UnRAR for the old entry names and every renamed RAR project failed with "Entry was not decoded"; a rewritten ZIP failed with "Missing local file header". Extraction now re-reads the archive headers itself and matches each project by entry position and size, and a rename refreshes the stored listing.
