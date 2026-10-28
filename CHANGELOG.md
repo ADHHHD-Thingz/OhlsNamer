@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.6.0
+## 1.5.2
 
 - **Move, copy and extract selected rows.** The list now supports multiple selection: Ctrl/Shift-click, or Ctrl+A to select all. Use **Move / extract selected...** or the right-click menu.
   - **Move / extract selected to folder...** moves plain files (across drives too) and extracts projects out of ZIP/RAR archives.
