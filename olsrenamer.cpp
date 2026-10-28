@@ -1,6 +1,9 @@
 // OLS Renamer - Win32 GUI. Renames WinOLS projects to
 // "Brand Model ECU SoftwareVersion (named maps).ols" from their header.
 #define NOMINMAX
+#include <algorithm>
+#include <climits>
+#include <cstdint>
 #include <set>
 #include <thread>
 #include <vector>
@@ -41,6 +44,8 @@ struct App {
   std::atomic<bool> renaming{false};
   ws lastLog;
   std::atomic<size_t> archivesDone{0}, archivesTotal{0};
+  int sortColumn = 0;          // 0 File, 1 New name, 2 Maps, 3 Status
+  bool sortDescending = false;
 } app;
 
 static int S(int v) { return MulDiv(v, app.dpi, 96); }
@@ -93,6 +98,15 @@ static void loadSettings() {
           ERROR_SUCCESS &&
       type == REG_DWORD && app.chkSaveLog)
     SendMessageW(app.chkSaveLog, BM_SETCHECK, saveLogs ? BST_CHECKED : BST_UNCHECKED, 0);
+  DWORD sortValue = 0;
+  bytes = sizeof(DWORD);
+  if (RegQueryValueExW(key, L"SortColumn", nullptr, &type, reinterpret_cast<BYTE*>(&sortValue), &bytes) == ERROR_SUCCESS &&
+      type == REG_DWORD && sortValue <= 3)
+    app.sortColumn = (int)sortValue;
+  bytes = sizeof(DWORD);
+  if (RegQueryValueExW(key, L"SortDescending", nullptr, &type, reinterpret_cast<BYTE*>(&sortValue), &bytes) == ERROR_SUCCESS &&
+      type == REG_DWORD)
+    app.sortDescending = sortValue != 0;
   for (auto pair : {std::make_pair(L"ScanArchives", app.chkArchives), std::make_pair(L"AllowArchiveRewrite", app.chkRewrite)}) {
     DWORD v = 1;
     bytes = sizeof(DWORD);
@@ -116,6 +130,9 @@ static void saveSettings() {
   DWORD recursive = SendMessageW(app.chkSub, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1u : 0u;
   RegSetValueExW(key, L"IncludeSubfolders", 0, REG_DWORD,
                  reinterpret_cast<const BYTE*>(&recursive), sizeof(recursive));
+  const DWORD sortColumn = (DWORD)app.sortColumn, sortDescending = app.sortDescending ? 1u : 0u;
+  RegSetValueExW(key, L"SortColumn", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&sortColumn), sizeof(sortColumn));
+  RegSetValueExW(key, L"SortDescending", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&sortDescending), sizeof(sortDescending));
   for (auto pair : {std::make_pair(L"SaveLogs", app.chkSaveLog), std::make_pair(L"ScanArchives", app.chkArchives),
                     std::make_pair(L"AllowArchiveRewrite", app.chkRewrite)}) {
     if (!pair.second) continue;
@@ -226,7 +243,65 @@ static void layout() {
 
 static void applyFont(HWND h) { SendMessageW(h, WM_SETFONT, (WPARAM)app.font, TRUE); }
 
+// ---------------------------------------------------------------- sorting
+// Text shown in the "New name" column (same rules as LVN_GETDISPINFO).
+static const ws& newNameText(const olsfs::Item& it) {
+  static const ws empty, same = L"(unchanged)";
+  return !it.a.ok ? empty : (it.willRename || it.renamed ? it.finalName : same);
+}
+
+// Orders two rows by the active column. Rows without a value for that column
+// (unreadable projects, unchanged names) always sort after rows that have one,
+// in either direction; ties fall back to the file path so the order is stable.
+static bool rowLess(size_t ia, size_t ib) {
+  const olsfs::Item& a = app.scan.items[ia];
+  const olsfs::Item& b = app.scan.items[ib];
+  int cmp = 0;
+  switch (app.sortColumn) {
+    case 1: {
+      const int ra = !a.a.ok ? 2 : (a.willRename || a.renamed ? 0 : 1);
+      const int rb = !b.a.ok ? 2 : (b.willRename || b.renamed ? 0 : 1);
+      if (ra != rb) return ra < rb;
+      cmp = StrCmpLogicalW(newNameText(a).c_str(), newNameText(b).c_str());
+      break;
+    }
+    case 2: {
+      if (a.a.ok != b.a.ok) return a.a.ok;  // unreadable projects last
+      if (a.a.definedCount != b.a.definedCount) cmp = a.a.definedCount < b.a.definedCount ? -1 : 1;
+      break;
+    }
+    case 3:
+      cmp = StrCmpLogicalW(a.status.c_str(), b.status.c_str());
+      break;
+    default:
+      cmp = StrCmpLogicalW(a.rel.c_str(), b.rel.c_str());
+      break;
+  }
+  if (cmp != 0) return app.sortDescending ? cmp > 0 : cmp < 0;
+  const int byPath = StrCmpLogicalW(a.rel.c_str(), b.rel.c_str());
+  if (byPath != 0) return byPath < 0;
+  return ia < ib;
+}
+
+static void updateSortArrows() {
+  HWND header = ListView_GetHeader(app.list);
+  if (!header) return;
+  const int count = Header_GetItemCount(header);
+  for (int i = 0; i < count; ++i) {
+    HDITEMW hd{};
+    hd.mask = HDI_FORMAT;
+    if (!Header_GetItem(header, i, &hd)) continue;
+    hd.fmt &= ~(HDF_SORTUP | HDF_SORTDOWN);
+    if (i == app.sortColumn) hd.fmt |= app.sortDescending ? HDF_SORTDOWN : HDF_SORTUP;
+    Header_SetItem(header, i, &hd);
+  }
+}
+
 static void refreshList() {
+  // Keep the selected project selected (and visible) across filtering and sorting.
+  size_t selectedItem = SIZE_MAX;
+  const int selectedRow = app.list ? ListView_GetNextItem(app.list, -1, LVNI_SELECTED) : -1;
+  if (selectedRow >= 0 && (size_t)selectedRow < app.visibleItems.size()) selectedItem = app.visibleItems[(size_t)selectedRow];
   app.visibleItems.clear();
   wchar_t filterBuf[1024] = {};
   if (app.edFilter) GetWindowTextW(app.edFilter, filterBuf, 1024);
@@ -244,9 +319,20 @@ static void refreshList() {
     }
     app.visibleItems.push_back(i);
   }
+  std::sort(app.visibleItems.begin(), app.visibleItems.end(), rowLess);
   ListView_SetItemCountEx(app.list, static_cast<int>(std::min<size_t>(
       app.visibleItems.size(), static_cast<size_t>(INT_MAX))),
       LVSICF_NOINVALIDATEALL | LVSICF_NOSCROLL);
+  ListView_SetItemState(app.list, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+  if (selectedItem != SIZE_MAX) {
+    auto found = std::find(app.visibleItems.begin(), app.visibleItems.end(), selectedItem);
+    if (found != app.visibleItems.end()) {
+      const int row = (int)(found - app.visibleItems.begin());
+      ListView_SetItemState(app.list, row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+      ListView_EnsureVisible(app.list, row, FALSE);
+    }
+  }
+  updateSortArrows();
   InvalidateRect(app.list, nullptr, TRUE);
 }
 
@@ -456,15 +542,24 @@ static LRESULT onNotify(LPNMHDR nh) {
     }
     return 0;
   }
+  if (nh->code == LVN_COLUMNCLICK) {
+    const int column = reinterpret_cast<const NMLISTVIEW*>(nh)->iSubItem;
+    if (column < 0 || column > 3) return 0;
+    if (column == app.sortColumn) app.sortDescending = !app.sortDescending;
+    else { app.sortColumn = column; app.sortDescending = false; }
+    if (!app.busy) refreshList();  // during a scan the list is rebuilt when it finishes
+    else updateSortArrows();
+    saveSettings();
+    return 0;
+  }
   if (nh->code == LVN_GETDISPINFOW) {
     auto* di = (NMLVDISPINFOW*)nh;
     if (!(di->item.mask & LVIF_TEXT) || (size_t)di->item.iItem >= app.visibleItems.size()) return 0;
     const auto& it = app.scan.items[app.visibleItems[(size_t)di->item.iItem]];
     const ws* s = &it.status;
-    static const ws empty, same = L"(unchanged)";
     switch (di->item.iSubItem) {
       case 0: s = &it.rel; break;
-      case 1: s = !it.a.ok ? &empty : (it.willRename || it.renamed ? &it.finalName : &same); break;
+      case 1: s = &newNameText(it); break;
       case 2: s = &it.mapsText; break;
       default: s = &it.status; break;
     }
@@ -537,6 +632,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         c.cx = 100;
         SendMessageW(app.list, LVM_INSERTCOLUMNW, i, (LPARAM)&c);
       }
+      updateSortArrows();  // show the remembered sort column
       DragAcceptFiles(h, TRUE);
       updateButtons();
       return 0;

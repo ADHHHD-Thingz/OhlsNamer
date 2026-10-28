@@ -20,6 +20,11 @@ Archives (ZIP and RAR), read and renamed without extraction:
   - The RAR writer is written from RARLAB's published format notes; UnRAR is used only for reading.
 - **Free space and rewrites.** Free space is checked before a full rewrite. The new **Allow full archive rewrite** option (and low disk space) falls back to renaming only the names that fit in place.
 - **GUI.**
+  - Click a column header (File, New name, Maps, Status) to sort by it; click again to reverse. The header shows the direction, and the choice is remembered between launches.
+    - Maps sorts numerically.
+    - Rows without a value (unreadable projects, unchanged names) stay at the bottom in both directions.
+    - Ties are ordered by path.
+    - The selected row stays selected when the list is re-sorted or filtered.
   - New **Look inside ZIP/RAR archives** and **Allow full archive rewrite** options, remembered between launches.
   - Archive progress is shown during renames, and Cancel stops an archive rewrite (the archive stays untouched).
   - The details dialog shows the archive and inner path.
