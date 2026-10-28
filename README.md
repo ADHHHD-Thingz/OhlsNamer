@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.4.0
+# OhlsNamer (OLS Renamer) — v1.5.0
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
@@ -9,7 +9,7 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 
 ## Features
 
-- Scans a folder (optionally recursively) for `.ols` files
+- Scans a folder (optionally recursively) for `.ols` files, including projects inside ZIP and RAR archives (never extracted)
 - Extracts vehicle identity, ECU producer/model, hardware/software/production numbers, engine code, year, original source filename and WinOLS format version
 - Normalizes common vehicle-brand and ECU-manufacturer aliases while preserving unknown values
 - Uses an embedded source HEX/BIN filename when software metadata is missing or generic
@@ -29,6 +29,28 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 - Restores the last-used directory and recursive-scan preference between launches
 - Double-click a project to inspect parsed header fields, identity sources, map evidence and warnings
 
+## Projects inside ZIP and RAR archives
+
+With **Look inside ZIP/RAR archives** on, every `.zip` and `.rar` in the scanned folders is opened in place. The projects inside are analysed and renamed like plain files, without unpacking anything to disk. Archives of any size are supported; a 205 GiB archive scans in under a second. See [docs/ARCHIVES.md](docs/ARCHIVES.md) for the design and test evidence.
+
+- **Reading.**
+  - ZIP entries (stored or deflate, including Zip64 and data descriptors) are decoded straight from the archive.
+  - RAR4/RAR5 entries, including solid archives, are decoded by the bundled UnRAR library.
+  - Only each project's map/ID area is kept in memory.
+- **Renaming.** A name lives only in an archive's headers, so renames rewrite headers and copy all compressed data byte for byte. Nothing is recompressed.
+  - **ZIP in place:** when a new name fits its old local header, only the headers and central directory are rewritten (kilobytes, under a second even for 200 GB+). An undo journal (`archive.zip.olsrenamer-undo`) protects against power loss; an interrupted rename is rolled back automatically on the next scan.
+  - **Full rewrite:** otherwise the archive is streamed to `archive.olsrenamer-tmp` beside it. Every copied byte is re-read and checksummed, then the original is replaced. This needs free space equal to the archive size.
+  - With **Allow full archive rewrite** off, or without enough free space, ZIP names that fit are still renamed in place and the rest are reported.
+  - **RAR:** WinRAR's `Rar.exe rn` is used when WinRAR is installed (it keeps recovery records). Otherwise the built-in header writer is used; it removes recovery-record and quick-open blocks (re-add a recovery record in WinRAR if you use one).
+  - Hard links and file copies inside RAR5 follow the renamed entry.
+- **Not supported (left untouched and reported):**
+  - encrypted RAR headers;
+  - multi-volume RAR sets;
+  - split ZIP sets;
+  - locked or signed RAR archives;
+  - ZIP methods other than stored/deflate (analysis only);
+  - `.7z` files.
+
 ## Large database performance
 
 **Fast map finding.** Every project has a map/ID area (metadata, map directory, map names) followed by the embedded ECU ROM images. The validated M1 version directory gives the exact boundary (`version_data_start`). The loader reads the first 1 MiB, proves the boundary, then reads only the map/ID area plus the first ROM image; later ROM versions (tuned copies) are never read. Map-directory search and map parsing never leave the map/ID area. If the boundary cannot be proven from the prefix, the whole file is read, so results never depend on the prefix size.
@@ -45,6 +67,11 @@ Measured on the 332-project corpus (AI-Dump `definitions/ols` + repository fixtu
 | Bytes read | 3.16 GB | 2.93 GB |
 
 Results with 1, 2 and 16 workers, and with prefix loading versus full reads, are byte-for-byte identical. The 16-worker figure on a 7800X3D was not benchmarked here (the test machine has 2 cores); expect scaling close to the physical core count.
+
+## Version 1.5.0
+
+- Reads, counts and renames projects inside ZIP and RAR archives without extracting them, with in-place ZIP header renames and verified full rewrites for 200 GB+ archives.
+- Re-scans of partial-identity names no longer nest bracketed old names, and review-only files keep their names reserved during collision planning.
 
 ## Version 1.4.0
 
@@ -142,6 +169,10 @@ g++ -std=c++17 -o core_cli core_cli.cpp -lz
 - `ols_fs.hpp` — Windows filesystem scan, analysis, rename planning and execution, CSV log
 - `olsrenamer.cpp` — Win32 GUI
 - `core_cli.cpp` — small command-line tester
+- `ols_archive.hpp` — ZIP/RAR parsing, streamed project capture, in-place and copy rename writers, undo journal
+- `ols_archive_scan.hpp`, `ols_unrar.hpp/.cpp` — archive analysis and the UnRAR library adapter
+- `archive_cli.cpp`, `archive_tests.cpp`, `tests/` — archive CLI and tests (`sh build_archive_cli.sh`)
+- `third_party/unrar/` — UnRAR 7.0.7 source (extraction only, see THIRD_PARTY_NOTICES.md)
 - `build.sh`, `app.rc`, `app.manifest` — build and resources
 
 ## Notes

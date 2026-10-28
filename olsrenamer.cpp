@@ -1,6 +1,7 @@
 // OLS Renamer - Win32 GUI. Renames WinOLS projects to
 // "Brand Model ECU SoftwareVersion (named maps).ols" from their header.
 #define NOMINMAX
+#include <set>
 #include <thread>
 #include <vector>
 #include <cwchar>
@@ -13,19 +14,21 @@
 using ols::ws;
 
 enum {
-  ID_FOLDER = 101, ID_BROWSE, ID_SUB, ID_SCAN, ID_RENAME, ID_CANCEL, ID_LIST, ID_STATUS, ID_PROGRESS, ID_FILTER, ID_CHANGES, ID_SAVELOG
+  ID_FOLDER = 101, ID_BROWSE, ID_SUB, ID_SCAN, ID_RENAME, ID_CANCEL, ID_LIST, ID_STATUS, ID_PROGRESS, ID_FILTER, ID_CHANGES, ID_SAVELOG,
+  ID_ARCHIVES, ID_REWRITE
 };
 enum {
   WM_SCAN_FOUND = WM_APP + 1,   // wParam = files found so far
   WM_READ_PROGRESS,             // wParam = done, lParam = total
   WM_SCAN_DONE,
   WM_RENAME_PROGRESS,           // wParam = done, lParam = total
-  WM_RENAME_DONE
+  WM_RENAME_DONE,
+  WM_ARCHIVE_PROGRESS           // wParam = per-mille of the current archive, lParam = archive index
 };
 
 struct App {
   HWND hwnd = nullptr, edFolder, btnBrowse, chkSub, btnScan, btnRename, btnCancel, lblFolder, progress,
-       status, list, edFilter, chkChanges, chkSaveLog = nullptr;
+       status, list, edFilter, chkChanges, chkSaveLog = nullptr, chkArchives = nullptr, chkRewrite = nullptr;
   HFONT font = nullptr;
   int dpi = 96;
   std::vector<ws> recentDirs;
@@ -37,6 +40,7 @@ struct App {
   bool scanned = false;
   std::atomic<bool> renaming{false};
   ws lastLog;
+  std::atomic<size_t> archivesDone{0}, archivesTotal{0};
 } app;
 
 static int S(int v) { return MulDiv(v, app.dpi, 96); }
@@ -89,6 +93,13 @@ static void loadSettings() {
           ERROR_SUCCESS &&
       type == REG_DWORD && app.chkSaveLog)
     SendMessageW(app.chkSaveLog, BM_SETCHECK, saveLogs ? BST_CHECKED : BST_UNCHECKED, 0);
+  for (auto pair : {std::make_pair(L"ScanArchives", app.chkArchives), std::make_pair(L"AllowArchiveRewrite", app.chkRewrite)}) {
+    DWORD v = 1;
+    bytes = sizeof(DWORD);
+    if (pair.second && RegQueryValueExW(key, pair.first, nullptr, &type, reinterpret_cast<BYTE*>(&v), &bytes) == ERROR_SUCCESS &&
+        type == REG_DWORD)
+      SendMessageW(pair.second, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0);
+  }
   RegCloseKey(key);
   SendMessageW(app.edFolder, CB_RESETCONTENT, 0, 0);
   for (const ws& path : app.recentDirs) SendMessageW(app.edFolder, CB_ADDSTRING, 0, (LPARAM)path.c_str());
@@ -105,10 +116,11 @@ static void saveSettings() {
   DWORD recursive = SendMessageW(app.chkSub, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1u : 0u;
   RegSetValueExW(key, L"IncludeSubfolders", 0, REG_DWORD,
                  reinterpret_cast<const BYTE*>(&recursive), sizeof(recursive));
-  if (app.chkSaveLog) {
-    DWORD saveLogs = SendMessageW(app.chkSaveLog, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1u : 0u;
-    RegSetValueExW(key, L"SaveLogs", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&saveLogs),
-                   sizeof(saveLogs));
+  for (auto pair : {std::make_pair(L"SaveLogs", app.chkSaveLog), std::make_pair(L"ScanArchives", app.chkArchives),
+                    std::make_pair(L"AllowArchiveRewrite", app.chkRewrite)}) {
+    if (!pair.second) continue;
+    DWORD v = SendMessageW(pair.second, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1u : 0u;
+    RegSetValueExW(key, pair.first, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&v), sizeof(v));
   }
   if (!app.lastDirectory.empty())
     RegSetValueExW(key, L"LastDirectory", 0, REG_SZ,
@@ -166,8 +178,11 @@ static void updateButtons() {
   EnableWindow(app.edFolder, !b);
   EnableWindow(app.chkSub, !b);
   if (app.chkSaveLog) EnableWindow(app.chkSaveLog, !b);
+  if (app.chkArchives) EnableWindow(app.chkArchives, !b);
+  if (app.chkRewrite) EnableWindow(app.chkRewrite, !b);
   EnableWindow(app.btnRename, !b && app.scanned && olsfs::renameCount(app.scan) > 0);
-  EnableWindow(app.btnCancel, b && !app.renaming);
+  // During renaming, Cancel stops archive rewrites (plain renames are instant).
+  EnableWindow(app.btnCancel, b);
   if (app.edFilter) EnableWindow(app.edFilter, !b);
   if (app.chkChanges) EnableWindow(app.chkChanges, !b);
 }
@@ -190,6 +205,9 @@ static void layout() {
   MoveWindow(app.btnRename, x, y, btnW + S(20), rowH, TRUE);
   x -= btnW + gap;
   MoveWindow(app.btnScan, x, y, btnW, rowH, TRUE);
+  y += rowH;
+  MoveWindow(app.chkArchives, m, y + S(3), S(250), rowH - S(4), TRUE);
+  MoveWindow(app.chkRewrite, m + S(258), y + S(3), S(330), rowH - S(4), TRUE);
   y += rowH + gap + S(2);
   MoveWindow(app.progress, m, y, W - 2 * m, S(18), TRUE);
   y += S(18) + S(4);
@@ -266,6 +284,7 @@ static void startScan() {
   }
   joinWorker();
   bool recursive = SendMessageW(app.chkSub, BM_GETCHECK, 0, 0) == BST_CHECKED;
+  const bool archives = !app.chkArchives || SendMessageW(app.chkArchives, BM_GETCHECK, 0, 0) == BST_CHECKED;
   app.scan = olsfs::Scan();
   app.scanned = false;
   app.cancel = false;
@@ -275,11 +294,11 @@ static void startScan() {
   setStatus(L"Looking for .ols files...");
   updateButtons();
   HWND hwnd = app.hwnd;
-  app.worker = std::thread([root, recursive, hwnd]() {
+  app.worker = std::thread([root, recursive, archives, hwnd]() {
     std::atomic<bool>& cancel = app.cancel;
     bool ok = olsfs::scanFolder(app.scan, root, recursive, cancel, [hwnd](size_t n) {
       if (n % 25 == 0) PostMessageW(hwnd, WM_SCAN_FOUND, n, 0);
-    });
+    }, archives);
     if (!ok) {
       app.scan.items.clear();
       PostMessageW(hwnd, WM_SCAN_DONE, 0, 1);  // lParam 1 = folder not found
@@ -305,10 +324,21 @@ static bool saveLogsEnabled() {
 static void startRename() {
   if (app.busy || olsfs::renameCount(app.scan) == 0) return;
   const bool saveLogs = saveLogsEnabled();
+  const bool allowRewrite = !app.chkRewrite || SendMessageW(app.chkRewrite, BM_GETCHECK, 0, 0) == BST_CHECKED;
+  size_t inArchives = 0;
+  std::set<int> archivesTouched;
+  for (const auto& it : app.scan.items)
+    if (it.willRename && !it.renamed && it.inArchive()) { ++inArchives; archivesTouched.insert(it.archive); }
   ws msg = L"Rename " + std::to_wstring(olsfs::renameCount(app.scan)) +
            L" file(s) in place?\n\nThe files are renamed on disk and this cannot be undone automatically. " +
            ws(saveLogs ? L"A recovery plan and a CSV log of the old and new names are saved in the folder."
                        : L"Log saving is OFF: no recovery plan or CSV log will be written.");
+  if (inArchives)
+    msg += L"\n\n" + std::to_wstring(inArchives) + L" of them are inside " + std::to_wstring(archivesTouched.size()) +
+           L" archive(s). Archive headers are rewritten in place when the new names fit; otherwise " +
+           (allowRewrite ? ws(L"a verified temporary copy replaces the archive (needs free space equal to its size).")
+                         : ws(L"those names are left unchanged (full rewrites are switched off).")) +
+           L" Compressed data is never re-compressed.";
   if (MessageBoxW(app.hwnd, msg.c_str(), L"OLS Renamer", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
     return;
   joinWorker();
@@ -320,9 +350,22 @@ static void startRename() {
   updateButtons();
   HWND hwnd = app.hwnd;
   app.lastLog.clear();
-  app.worker = std::thread([hwnd, saveLogs]() {
+  app.worker = std::thread([hwnd, saveLogs, allowRewrite]() {
+    olsfs::ArchiveRenameSettings settings;
+    settings.allowRewrite = allowRewrite;
+    settings.cancel = &app.cancel;
+    settings.progress = [hwnd](size_t index, size_t done, size_t total, uint64_t bytes, uint64_t all) {
+      app.archivesDone = done;
+      app.archivesTotal = total;
+      static uint64_t lastTick = 0;
+      const uint64_t now = GetTickCount64();
+      if (bytes == all || now - lastTick > 100) {
+        lastTick = now;
+        PostMessageW(hwnd, WM_ARCHIVE_PROGRESS, all ? (WPARAM)((bytes * 1000) / all) : 0, (LPARAM)index);
+      }
+    };
     olsfs::renameAll(app.scan, [hwnd](size_t d, size_t t) { PostMessageW(hwnd, WM_RENAME_PROGRESS, d, t); },
-                     saveLogs);
+                     saveLogs, &settings);
     if (saveLogs) olsfs::writeLog(app.scan, app.lastLog);
     PostMessageW(hwnd, WM_RENAME_DONE, 0, 0);
   });
@@ -356,7 +399,15 @@ static LRESULT onNotify(LPNMHDR nh) {
         MessageBoxW(app.hwnd, a.error.c_str(), L"OLS analysis", MB_ICONWARNING);
         return 0;
       }
-      ws details = L"File: " + it.rel +
+      ws archiveInfo;
+      if (it.inArchive()) {
+        const auto& arc = app.scan.archives[(size_t)it.archive];
+        archiveInfo = L"\nArchive: " + arc.path + L" (" +
+                      (arc.listing.kind == olsarc::ArchiveKind::Zip ? ws(L"ZIP") : ws(arc.listing.rar.solid ? L"solid RAR" : L"RAR")) +
+                      L")\nPath inside archive: " + olsarc::fromUtf8(arc.listing.projects[it.project].innerPath) +
+                      (arc.listing.problem.empty() ? ws() : L"\nArchive cannot be modified: " + arc.listing.problem);
+      }
+      ws details = L"File: " + it.rel + archiveInfo +
         L"\nWinOLS format version: " + std::to_wstring(a.formatVersion) +
         L"\nHeader complete: " + ws(a.headerComplete ? L"yes" : L"no") +
         L"\nDeclared size consistent: " + ws(a.formatSizeConsistent ? L"yes" : L"no") +
@@ -461,6 +512,10 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
       SendMessageW(app.chkSub, BM_SETCHECK, BST_CHECKED, 0);
       app.chkSaveLog = mk(L"BUTTON", L"Save rename logs (CSV)", WS_TABSTOP | BS_AUTOCHECKBOX, ID_SAVELOG);
       SendMessageW(app.chkSaveLog, BM_SETCHECK, BST_CHECKED, 0);
+      app.chkArchives = mk(L"BUTTON", L"Look inside ZIP/RAR archives", WS_TABSTOP | BS_AUTOCHECKBOX, ID_ARCHIVES);
+      SendMessageW(app.chkArchives, BM_SETCHECK, BST_CHECKED, 0);
+      app.chkRewrite = mk(L"BUTTON", L"Allow full archive rewrite (needs free space)", WS_TABSTOP | BS_AUTOCHECKBOX, ID_REWRITE);
+      SendMessageW(app.chkRewrite, BM_SETCHECK, BST_CHECKED, 0);
       loadSettings();
       app.btnScan = mk(L"BUTTON", L"Scan", WS_TABSTOP | BS_DEFPUSHBUTTON, ID_SCAN);
       app.btnRename = mk(L"BUTTON", L"Rename files", WS_TABSTOP | BS_PUSHBUTTON, ID_RENAME);
@@ -521,6 +576,8 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
           if (!app.busy) refreshList();
           break;
         case ID_SAVELOG:
+        case ID_ARCHIVES:
+        case ID_REWRITE:
           if (HIWORD(w) == BN_CLICKED) saveSettings();
           break;
         case ID_CANCEL:
@@ -584,6 +641,14 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_RENAME_PROGRESS: {
       setProgress(w, l);
       setStatus(L"Renaming " + std::to_wstring(w) + L" of " + std::to_wstring(l));
+      return 0;
+    }
+    case WM_ARCHIVE_PROGRESS: {
+      setProgress(w, 1000);
+      const size_t index = (size_t)l;
+      ws name = index < app.scan.archives.size() ? app.scan.archives[index].rel : ws();
+      setStatus(L"Archive " + std::to_wstring(app.archivesDone + 1) + L" of " + std::to_wstring(app.archivesTotal) +
+                L": " + name + L"  (" + std::to_wstring(w / 10) + L"%)");
       return 0;
     }
     case WM_RENAME_DONE: {

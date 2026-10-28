@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.5.0
+
+Archives (ZIP and RAR), read and renamed without extraction:
+- **Scanning.** Every `.zip`/`.rar` found is listed from its central directory or block headers. Its `.ols` projects become normal rows, shown as `archive.zip › folder/name.ols`.
+- **Analysis.** Decoding goes into memory only and keeps just the map/ID area, using the same load plan as plain files.
+  - ZIP projects are analysed in parallel.
+  - Each RAR archive is decoded in one sequential pass, which solid archives require, using the bundled UnRAR 7.0.7 library.
+  - On the test archives, every in-archive map count equals the plain-file count.
+- **ZIP renaming.**
+  - In place when the new name fits the old local header: a 0xD935 padding extra field absorbs the difference. Only the headers and central directory are rewritten, behind a CRC-protected undo journal that is rolled back automatically after a crash.
+  - Otherwise by a streamed copy with re-read CRC verification of every copied span, then an atomic replace.
+  - Zip64, data descriptors, SFX stubs, comments and extra fields are preserved. Info-ZIP Unicode Path fields are dropped from renamed entries. Non-ASCII names set the UTF-8 flag. OEM-encoded folders keep their bytes.
+- **RAR renaming.** Uses WinRAR's `Rar.exe rn` when installed, otherwise a built-in writer for RAR4 and RAR5 headers. The built-in writer:
+  - recomputes header CRCs and copies packed data verbatim;
+  - removes quick-open and recovery-record blocks and the main-header locator;
+  - retargets RAR5 hard links and file copies to renamed entries;
+  - refuses encrypted headers, multi-volume sets, and locked or signed archives.
+  - The RAR writer is written from RARLAB's published format notes; UnRAR is used only for reading.
+- **Free space and rewrites.** Free space is checked before a full rewrite. The new **Allow full archive rewrite** option (and low disk space) falls back to renaming only the names that fit in place.
+- **GUI.**
+  - New **Look inside ZIP/RAR archives** and **Allow full archive rewrite** options, remembered between launches.
+  - Archive progress is shown during renames, and Cancel stops an archive rewrite (the archive stays untouched).
+  - The details dialog shows the archive and inner path.
+- **Verification.**
+  - Archives made with `zip`, 7-Zip, Python (Zip64, data descriptors) and RAR 7 were scanned, renamed in place and by copy, then validated with `unzip -t`, `7z t`, Python `testzip`, `unrar t` and `rar t`, with byte-identical extracted contents.
+  - 90 rename runs across libarchive's RAR4/RAR5 sample archives passed (SFX, solid, filters, PPMd, Unicode, hard links, recovery records).
+  - A 205 GiB Zip64 archive scanned in 0.43 s and renamed in place in 0.05 s.
+  - 26,000 mutated archives were fuzzed under ASan/UBSan.
+- **Limits.**
+  - ZIP methods other than stored/deflate are listed but not analysed.
+  - `.7z` is not supported.
+  - Solid RAR analysis must decode everything before each project.
+
+Fixes:
+- `finalProposedName` (now in the core) no longer nests `[old name]` tags when re-scanning its own output.
+- Review-only files keep their current names reserved during collision planning. Previously another file could be planned onto the name, which made the batch preflight fail.
+- No empty CSV log is written when nothing was renamed.
+
+
 ## 1.4.0
 
 Naming (verified against all 305 AI-Dump `definitions/ols` projects plus the 27 repository fixtures; 3.42M map records):

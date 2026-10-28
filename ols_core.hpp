@@ -2078,4 +2078,58 @@ inline Analysis analyzeOls(const uint8_t* d, size_t loaded, uint64_t fileSize) {
 
 inline Analysis analyzeOls(const uint8_t* d, size_t n) { return analyzeOls(d, n, n); }
 
+// Final proposed name for a project currently called `currentName`. When the
+// identity is partial, the original stem is kept as a bracketed fallback.
+inline ws finalProposedName(const Analysis& a, const ws& currentName) {
+  if (!isUnknownNamePart(a.brand) && !isUnknownNamePart(a.model) &&
+      !isUnknownNamePart(a.ecu))
+    return a.proposed;
+
+  ws originalStem = currentName;
+  if (originalStem.size() >= 4 && lower(originalStem.substr(originalStem.size() - 4)) == L".ols")
+    originalStem.resize(originalStem.size() - 4);
+  ws normalizedOriginal = lower(jsTrim(originalStem));
+  if (normalizedOriginal.empty() || normalizedOriginal == L"project" ||
+      normalizedOriginal == L"unknown" || normalizedOriginal == L"ols project" ||
+      normalizedOriginal == L"untitled" || normalizedOriginal == L"new project")
+    return a.proposed;
+
+  // The parser cannot reliably assign words in an existing filename to missing
+  // metadata slots. Keep the complete original stem as a labelled fallback
+  // rather than silently replacing it with an "Unknown" component.
+  ws proposed = a.proposed;
+  size_t suffixAt = proposed.rfind(L" (");
+  if (suffixAt == ws::npos || proposed.size() < 5 ||
+      lower(proposed.substr(proposed.size() - 4)) != L".ols")
+    return a.proposed;
+  ws base = proposed.substr(0, suffixAt);
+  ws suffix = proposed.substr(suffixAt);
+  // A stem this tool produced earlier ends with its own map-count suffix,
+  // e.g. "Chrysler Voyager 0281010814 (17)". Drop it before comparing, so a
+  // re-scan does not nest the old name: "... [Chrysler Voyager ... (17)] (17)".
+  {
+    const size_t open = originalStem.rfind(L" (");
+    if (open != ws::npos && originalStem.size() > open + 3 && originalStem.back() == L')') {
+      const ws inner = originalStem.substr(open + 2, originalStem.size() - open - 3);
+      const bool count = inner == L"Nil" ||
+          (!inner.empty() && std::all_of(inner.begin(), inner.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }));
+      if (count) originalStem.resize(open);
+    }
+  }
+  ws fallback = filenamePart(originalStem);
+  if (fallback.empty()) return a.proposed;
+  // Already "<base> [<old stem>]" from an earlier run: keep it as it is.
+  const ws lowBase = lower(base), lowFallback = lower(fallback);
+  const bool alreadyTagged = !base.empty() && lowFallback.size() > lowBase.size() + 3 &&
+                             lowFallback.compare(0, lowBase.size() + 2, lowBase + L" [") == 0 &&
+                             lowFallback.back() == L']';
+  if (base.empty() || alreadyTagged) base = fallback;
+  else if (lowBase != lowFallback) base += L" [" + fallback + L"]";
+  const size_t maxBase = 240 > suffix.size() ? 240 - suffix.size() : 1;
+  if (base.size() > maxBase) base.resize(maxBase);
+  while (!base.empty() && (base.back() == L' ' || base.back() == L'.')) base.pop_back();
+  return base + suffix;
+}
+
+
 }  // namespace ols

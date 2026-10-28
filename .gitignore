@@ -5,3 +5,8 @@
 core_cli
 *.csv
 core_tests
+build/
+archive_cli
+archive_tests
+*.olsrenamer-tmp
+*.olsrenamer-undo

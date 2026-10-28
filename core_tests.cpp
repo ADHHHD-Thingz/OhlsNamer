@@ -240,6 +240,18 @@ int main() {
     assert(scanEmbeddedHexFilename(all.data(), romBegin, romBegin, all.size()) == L"CAFT5F04.DAT");
   }
 
+  // Re-running on its own output must be stable (no nested [old] tags).
+  {
+    Analysis partial;
+    partial.ok = true;
+    partial.brand = L"Toyota"; partial.model = L"Unknown"; partial.ecu = L"SHXX";
+    partial.proposed = L"Toyota SHXX 37122000 (57).ols";
+    const ws once = finalProposedName(partial, L"Toyota Unknown SHXX (57).ols");
+    assert(once == L"Toyota SHXX 37122000 [Toyota Unknown SHXX] (57).ols");
+    assert(finalProposedName(partial, once) == once);
+    assert(finalProposedName(partial, L"Toyota SHXX 37122000 (57).ols") == L"Toyota SHXX 37122000 (57).ols");
+  }
+
   ws longName=proposedFilename(ws(100,L'B'),ws(100,L'M'),ws(100,L'E'),ws(100,L'S'),42);
   assert(longName.size()<=240 && longName.find(L"(42).ols")!=ws::npos);
   assert(proposedFilename(L"BMW",L"320d",L"EDC17C46",L"",0).find(L"(Nil).ols")!=ws::npos);

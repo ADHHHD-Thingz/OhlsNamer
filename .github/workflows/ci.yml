@@ -110,6 +110,30 @@ jobs:
           name: ols-reference-map-audit-${{ github.sha }}
           path: olstest-reference-map-audit.txt
           if-no-files-found: warn
+      - name: Install archive tools (zip, 7-Zip, RAR) for archive tests
+        run: |
+          sudo apt-get install -y zip unzip p7zip-full sharutils
+          sudo apt-get install -y rar unrar || echo "rar/unrar unavailable: RAR creation tests will be skipped"
+      - name: Build archive CLI and archive unit tests
+        run: sh ./build_archive_cli.sh && ./archive_tests
+      - name: Archive unit tests with address and undefined-behavior sanitizers
+        run: |
+          g++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer archive_tests.cpp ols_unrar.cpp build/linux/libunrar.a -lz -pthread -o archive_tests_sanitized
+          ASAN_OPTIONS=detect_leaks=1 ./archive_tests_sanitized
+      - name: ZIP/RAR integration (scan, rename, validate with unzip/7z/python/unrar/rar)
+        run: g++ -std=c++17 -O2 core_cli.cpp -lz -o core_cli && bash tests/archive_integration.sh "$RUNNER_TEMP/archive-it"
+      - name: RAR writer against libarchive's RAR4/RAR5 sample archives
+        shell: bash
+        run: |
+          command -v unrar >/dev/null && command -v rar >/dev/null || { echo "rar/unrar unavailable; skipped"; exit 0; }
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/libarchive/libarchive "$RUNNER_TEMP/libarchive"
+          git -C "$RUNNER_TEMP/libarchive" sparse-checkout set libarchive/test
+          mkdir -p "$RUNNER_TEMP/rarcorpus"
+          for u in "$RUNNER_TEMP"/libarchive/libarchive/test/test_*rar*.uu; do
+            case $u in *.Z.uu) continue;; esac
+            uudecode -o "$RUNNER_TEMP/rarcorpus/$(basename "${u%.uu}")" "$u" || true
+          done
+          bash tests/rar_format_corpus.sh "$RUNNER_TEMP/rarcorpus" "$RUNNER_TEMP/rarwork"
       - name: Install MinGW cross-compiler
         run: sudo apt-get install -y g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libz-mingw-w64-dev
       - name: Cross-compile Win32 GUI release executable
