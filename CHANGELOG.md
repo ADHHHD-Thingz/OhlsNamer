@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.5.1
+
+First published release since 1.3.18. It includes everything in 1.4.0 and 1.5.0 below.
+
+New in 1.5.1:
+- **Sort by any column.** Click a column header (File, New name, Maps, Status) to sort by it; click again to reverse.
+  - The header shows the direction, and the choice is remembered between launches.
+  - File, New name and Status use natural (Explorer-style) ordering; Maps sorts numerically.
+  - Rows without a value (unreadable projects, unchanged names) stay at the bottom in both directions, and ties are ordered by path.
+  - The selected row stays selected and in view when the list is re-sorted or filtered.
+
+Highlights of 1.5.0:
+- Reads, counts maps in, and renames WinOLS projects inside ZIP and RAR archives without extracting them, including 200 GB+ archives.
+- ZIP names that fit are renamed in place in under a second, protected by an undo journal. Otherwise the archive is rewritten as a verified copy.
+- RAR renames use WinRAR when it is installed, otherwise a built-in header writer.
+- New options: **Look inside ZIP/RAR archives** and **Allow full archive rewrite**.
+
+Highlights of 1.4.0:
+- Counts 82,955 previously missed map names stored behind ID-only names (Cummins and GM projects no longer show `(Nil)`), and excludes WinOLS statistics captions and other generated junk.
+- Fast map finding scans only the map/ID area of each project; analysis is 4.4× faster.
+- Analysis uses every logical processor (16 workers on a Ryzen 7 7800X3D).
+- New **Save rename logs (CSV)** toggle.
+
+
 ## 1.5.0
 
 Archives (ZIP and RAR), read and renamed without extraction:
@@ -20,11 +44,6 @@ Archives (ZIP and RAR), read and renamed without extraction:
   - The RAR writer is written from RARLAB's published format notes; UnRAR is used only for reading.
 - **Free space and rewrites.** Free space is checked before a full rewrite. The new **Allow full archive rewrite** option (and low disk space) falls back to renaming only the names that fit in place.
 - **GUI.**
-  - Click a column header (File, New name, Maps, Status) to sort by it; click again to reverse. The header shows the direction, and the choice is remembered between launches.
-    - Maps sorts numerically.
-    - Rows without a value (unreadable projects, unchanged names) stay at the bottom in both directions.
-    - Ties are ordered by path.
-    - The selected row stays selected when the list is re-sorted or filtered.
   - New **Look inside ZIP/RAR archives** and **Allow full archive rewrite** options, remembered between launches.
   - Archive progress is shown during renames, and Cancel stops an archive rewrite (the archive stays untouched).
   - The details dialog shows the archive and inner path.

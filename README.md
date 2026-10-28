@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.5.0
+# OhlsNamer (OLS Renamer) — v1.5.1
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
@@ -68,6 +68,10 @@ Measured on the 332-project corpus (AI-Dump `definitions/ols` + repository fixtu
 | Bytes read | 3.16 GB | 2.93 GB |
 
 Results with 1, 2 and 16 workers, and with prefix loading versus full reads, are byte-for-byte identical. The 16-worker figure on a 7800X3D was not benchmarked here (the test machine has 2 cores); expect scaling close to the physical core count.
+
+## Version 1.5.1
+
+- Sort the result list by clicking any column header; click again to reverse. The choice is remembered.
 
 ## Version 1.5.0
 
