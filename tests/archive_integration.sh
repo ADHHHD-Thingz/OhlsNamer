@@ -156,6 +156,48 @@ for a in deflate.zip stored.zip sevenzip.zip zip64.zip descriptor.zip rar5.rar r
   echo "ok   extract $a ($(wc -l < "$out.sha") projects byte-identical; archive unchanged; no overwrite on re-extract)"
 done
 
+# Damaged RAR5 (a broken header mid-archive, and a zero-filled tail like an
+# unfinished download): the header walk refuses them, the UnRAR fallback still
+# lists, analyses and extracts every reachable project byte-identically, and
+# renaming inside them is refused.
+if [ -f rar5.rar ]; then
+python3 -I - rar5.rar <<'EOF'
+import sys
+d = bytearray(open(sys.argv[1], 'rb').read()); n = len(d)
+def vint(b, p):
+    v = s = 0
+    while True:
+        c = b[p]; p += 1; v |= (c & 0x7f) << s; s += 7
+        if not c & 0x80: return v, p
+pos, files = 8, []
+while pos < n:
+    hs, q = vint(d, pos + 4); t, r = vint(d, q); fl, r = vint(d, r); ds = 0
+    if fl & 1: _, r = vint(d, r)
+    if fl & 2: ds, r = vint(d, r)
+    if t == 2: files.append(pos)
+    pos = q + hs + ds
+    if t == 5: break
+mid = files[len(files) // 2]
+z = bytearray(d); z[mid + 10] ^= 0x55; open('damaged_header.rar', 'wb').write(z)
+z = bytearray(d); z[mid:] = bytes(n - mid); open('damaged_zerotail.rar', 'wb').write(z)
+EOF
+for a in damaged_header.rar damaged_zerotail.rar; do
+  "$CLI" scan "$a" > "$a.scan" 2>&1
+  grep -q "Read-only (listed by UnRAR" "$a.scan" || { fail "$a: fallback listing not used"; head -3 "$a.scan"; continue; }
+  out="$WORK/extract_$a"; rm -rf "$out"; mkdir -p "$out"
+  "$CLI" extract "$a" "$out" > "$out.log" 2>&1
+  got=$(ls "$out" | grep -c '\.ols$')
+  [ "$got" -gt 0 ] || fail "$a: nothing extracted"
+  (cd "$out" && sha256sum -- *.ols | awk '{print $1}') | grep -qvxFf "$WORK/ols.sha" && fail "$a: an extracted file differs from every original"
+  ls "$out" | grep -q 'olsrenamer-part' && fail "$a: partial files left"
+  cp "$a" "rn-$a"
+  "$CLI" rename "rn-$a" > "rn-$a.log" 2>&1
+  grep -q "rename: OK" "rn-$a.log" && fail "$a: rename inside a damaged archive was not refused"
+  cmp -s "$a" "rn-$a" || fail "$a: refused rename modified the archive"
+  echo "ok   $a read via UnRAR fallback ($got projects extracted byte-identical; rename refused; $(grep -o 'zero-filled' "$a.scan" | head -1))"
+done
+fi
+
 echo "work dir: $WORK"
 [ $fails -eq 0 ] && echo "ARCHIVE INTEGRATION PASSED" || echo "ARCHIVE INTEGRATION FAILED ($fails)"
 exit $fails

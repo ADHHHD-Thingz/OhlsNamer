@@ -1049,21 +1049,35 @@ inline bool findRarSignature(ByteSource& src, RarArchive& r) {
   return false;
 }
 
+// Where and why a RAR header walk stopped, in words a user can act on. A run
+// of zero bytes where a header belongs is what an unfinished download or copy
+// (pre-allocated file) or a zeroed disk region looks like.
+inline ws rarDamageAt(ByteSource& src, uint64_t pos, const ws& what) {
+  const uint64_t n = src.size();
+  uint8_t buf[4096];
+  const size_t len = (size_t)std::min<uint64_t>(sizeof buf, pos < n ? n - pos : 0);
+  bool zeros = len >= 16 && src.readAt(pos, buf, len);
+  for (size_t i = 0; zeros && i < len; ++i) zeros = buf[i] == 0;
+  ws msg = what + L" at offset " + std::to_wstring(pos) + L" of " + std::to_wstring(n) + L" bytes";
+  if (zeros) msg += L": the archive is zero-filled from there (an unfinished download or copy, or damage)";
+  return msg + L".";
+}
+
 inline bool parseRar5(ByteSource& src, RarArchive& r, ws& error) {
   uint64_t pos = r.sfxSize + r.signatureSize;
   const uint64_t n = src.size();
   while (pos < n) {
     uint8_t head[16];
     const size_t avail = (size_t)std::min<uint64_t>(16, n - pos);
-    if (avail < 6 || !src.readAt(pos, head, avail)) { error = L"Truncated RAR5 block."; return false; }
+    if (avail < 6 || !src.readAt(pos, head, avail)) { error = rarDamageAt(src, pos, L"Truncated RAR5 block"); return false; }
     size_t q = 4;
     uint64_t hsize = 0;
-    if (!readVint(head, avail, q, hsize) || hsize == 0 || hsize > (2u << 20)) { error = L"Bad RAR5 header size."; return false; }
+    if (!readVint(head, avail, q, hsize) || hsize == 0 || hsize > (2u << 20)) { error = rarDamageAt(src, pos, L"Bad RAR5 header size"); return false; }
     const size_t full = q + (size_t)hsize;
-    if (pos + full > n) { error = L"Truncated RAR5 header."; return false; }
+    if (pos + full > n) { error = rarDamageAt(src, pos, L"Truncated RAR5 header (the archive ends early)"); return false; }
     Bytes h(full);
     if (!src.readAt(pos, h.data(), full)) { error = L"Read error."; return false; }
-    if (crc32Of(h.data() + 4, full - 4) != le32(h.data())) { error = L"RAR5 header CRC mismatch at offset " + std::to_wstring(pos) + L"."; return false; }
+    if (crc32Of(h.data() + 4, full - 4) != le32(h.data())) { error = rarDamageAt(src, pos, L"RAR5 header CRC mismatch"); return false; }
     RarBlock b;
     b.offset = pos;
     b.headerSize = full;
@@ -1136,7 +1150,7 @@ inline bool parseRar5(ByteSource& src, RarArchive& r, ws& error) {
     if (type == 5) { r.endOfArchive = pos; break; }
   }
   if (r.encryptedHeaders) r.problem = L"Archive headers are encrypted (password required).";
-  else if (r.endOfArchive == 0) { error = L"RAR5 archive has no end-of-archive block."; return false; }
+  else if (r.endOfArchive == 0) { error = L"RAR5 archive has no end-of-archive block: the file ends at " + std::to_wstring(n) + L" bytes before the archive does (incomplete download or copy?)."; return false; }
   return true;
 }
 
@@ -1149,7 +1163,7 @@ inline bool parseRar4(ByteSource& src, RarArchive& r, ws& error) {
     const uint16_t headCrc = le16(base);
     const uint8_t type = base[2];
     const uint16_t flags = le16(base + 3), hsize = le16(base + 5);
-    if (hsize < 7 || pos + hsize > n) { error = L"Bad RAR4 header size."; return false; }
+    if (hsize < 7 || pos + hsize > n) { error = rarDamageAt(src, pos, L"Bad RAR4 header size"); return false; }
     Bytes h(hsize);
     if (!src.readAt(pos, h.data(), hsize)) { error = L"Read error."; return false; }
     RarBlock b;
@@ -1169,7 +1183,7 @@ inline bool parseRar4(ByteSource& src, RarArchive& r, ws& error) {
     }
     // Header CRC: low 16 bits of CRC-32 over the header after the CRC field.
     if ((crc32Of(h.data() + 2, hsize - 2) & 0xffff) != headCrc) {
-      error = L"RAR4 header CRC mismatch at offset " + std::to_wstring(pos) + L".";
+      error = rarDamageAt(src, pos, L"RAR4 header CRC mismatch");
       return false;
     }
     uint64_t add = 0;
@@ -1519,6 +1533,7 @@ struct ArchiveListing {
   RarArchive rar;
   std::vector<ArchiveProject> projects;
   std::vector<std::string> allNames;  // every entry name (collision checks)
+  bool unrarListing = false;          // RAR listed by UnRAR (header walk refused it); read-only
   ws problem;                         // why renaming is not possible ("" = renamable)
 };
 

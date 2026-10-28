@@ -279,13 +279,13 @@ inline void addArchiveItems(Scan& sc, const ws& path, const ws& rel, const std::
     info.note = msg;
     sc.scanErrors.push_back(path + L": " + msg);
   }
-  auto src = ops.openRead(path);
   ws err;
-  if (!src) { sc.scanErrors.push_back(path + L": " + lastError(GetLastError())); return; }
-  if (!olsarc::listArchive(*src, olsarc::archiveKindForName(path), info.listing, err)) {
+  if (!ops.exists(path)) { sc.scanErrors.push_back(path + L": " + lastError(GetLastError())); return; }
+  if (!olsarc::listArchiveFile(ops, path, olsarc::archiveKindForName(path), info.listing, err)) {
     sc.scanErrors.push_back(path + L": " + err);
     return;
   }
+  if (info.listing.unrarListing) sc.scanErrors.push_back(path + L": " + info.listing.problem);
   if (info.listing.projects.empty()) return;
   if (info.listing.kind == olsarc::ArchiveKind::Rar && info.listing.rar.volume) {
     sc.scanErrors.push_back(path + L": multi-volume RAR sets are not supported.");

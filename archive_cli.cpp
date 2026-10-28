@@ -18,11 +18,11 @@ static bool scanArchive(const ws& path, ArchiveListing& listing, std::vector<Pro
   PosixFileOps ops;
   ws msg;
   if (recoverInterruptedRename(ops, path, msg)) printf("  recovery: %s\n", toUtf8(msg).c_str());
-  auto src = ops.openRead(path);
-  if (!src) { printf("  cannot open\n"); return false; }
   ws err;
   const ArchiveKind kind = archiveKindForName(path);
-  if (!listArchive(*src, kind, listing, err)) { printf("  error: %s\n", toUtf8(err).c_str()); return false; }
+  if (!listArchiveFile(ops, path, kind, listing, err)) { printf("  error: %s\n", toUtf8(err).c_str()); return false; }
+  auto src = ops.openRead(path);
+  if (!src) { printf("  cannot open\n"); return false; }
   results.clear();
   if (kind == ArchiveKind::Zip) {
     for (size_t i = 0; i < listing.projects.size(); ++i) results.push_back(analyzeZipProject(*src, listing, i));
@@ -56,14 +56,12 @@ int main(int argc, char** argv) {
     std::string dest = paths[1];
     if (!dest.empty() && dest.back() != '/') dest += '/';
     PosixFileOps ops;
-    auto src = ops.openRead(path);
     ArchiveListing listing;
     ws err;
-    if (!src || !listArchive(*src, archiveKindForName(path), listing, err)) {
+    if (!listArchiveFile(ops, path, archiveKindForName(path), listing, err)) {
       printf("error: %s\n", toUtf8(err).c_str());
       return 1;
     }
-    src.reset();
     std::vector<ExtractRequest> requests;
     std::set<ws> taken;
     for (size_t i = 0; i < listing.projects.size(); ++i) {

@@ -152,4 +152,57 @@ bool streamEntries(const ws& archivePath, const Callbacks& cb, ws& error) {
   return ok;
 }
 
+bool listEntries(const ws& archivePath, const std::function<void(const EntryInfo&)>& entry, ListResult& result,
+                 ws& error) {
+  std::lock_guard<std::mutex> lock(libraryMutex());
+  Callbacks none;
+  Session session;
+  session.cb = &none;
+  RAROpenArchiveDataEx open{};
+#ifdef _WIN32
+  std::vector<wchar_t> path(archivePath.begin(), archivePath.end());
+  path.push_back(0);
+  open.ArcNameW = path.data();
+#else
+  std::string narrow;
+  for (wchar_t c : archivePath) {
+    uint32_t u = (uint32_t)c;
+    if (u < 0x80) narrow += (char)u;
+    else if (u < 0x800) { narrow += (char)(0xc0 | (u >> 6)); narrow += (char)(0x80 | (u & 0x3f)); }
+    else { narrow += (char)(0xe0 | (u >> 12)); narrow += (char)(0x80 | ((u >> 6) & 0x3f)); narrow += (char)(0x80 | (u & 0x3f)); }
+  }
+  open.ArcName = &narrow[0];
+#endif
+  open.OpenMode = RAR_OM_LIST;
+  open.Callback = onMessage;
+  open.UserData = reinterpret_cast<LPARAM>(&session);
+  HANDLE h = RAROpenArchiveEx(&open);
+  if (!h || open.OpenResult != ERAR_SUCCESS) {
+    error = describe(open.OpenResult);
+    if (h) RARCloseArchive(h);
+    return false;
+  }
+  result.volume = (open.Flags & ROADF_VOLUME) != 0;
+  result.solid = (open.Flags & ROADF_SOLID) != 0;
+  bool ok = true;
+  RARHeaderDataEx header{};
+  for (size_t index = 0;; ++index) {
+    const int rc = RARReadHeaderEx(h, &header);
+    if (rc == ERAR_END_ARCHIVE) break;
+    if (rc != ERAR_SUCCESS) { error = describe(rc); ok = false; break; }
+    EntryInfo info;
+    info.index = index;
+    info.nameUtf8 = toUtf8(header.FileNameW);
+    info.unpackedSize = ((uint64_t)header.UnpSizeHigh << 32) | header.UnpSize;
+    info.encrypted = (header.Flags & RHDF_ENCRYPTED) != 0;
+    info.directory = (header.Flags & RHDF_DIRECTORY) != 0;
+    entry(info);
+    ++result.entries;
+    const int prc = RARProcessFileW(h, RAR_SKIP, nullptr, nullptr);
+    if (prc != ERAR_SUCCESS) { error = describe(prc); ok = false; break; }
+  }
+  RARCloseArchive(h);
+  return ok;
+}
+
 }  // namespace olsunrar

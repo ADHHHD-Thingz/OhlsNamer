@@ -56,6 +56,37 @@ inline bool sameEntryName(const std::string& unrarName, const std::string& parse
   return !(ascii(a) && ascii(b));  // encoding ambiguity: position and size decide
 }
 
+// Lists an archive for reading (scan, map counts, extraction). RAR archives
+// that the built-in header walk refuses (damage, an unfinished download, or a
+// layout it does not know) are listed through UnRAR instead: reading and
+// extraction then work for every entry UnRAR can reach, and renaming inside
+// the archive is disabled (listing.problem says why). Entry indices from both
+// sources are the file-header order that streamEntries reports.
+inline bool listArchiveFile(ArchiveFileOps& ops, const ws& path, ArchiveKind kind, ArchiveListing& out, ws& error) {
+  auto src = ops.openRead(path);
+  if (!src) { error = L"Cannot open the archive."; return false; }
+  ws parserError;
+  if (listArchive(*src, kind, out, parserError)) return true;
+  src.reset();
+  if (kind != ArchiveKind::Rar) { error = parserError; return false; }
+  ArchiveListing fb;
+  fb.kind = ArchiveKind::Rar;
+  olsunrar::ListResult lr;
+  ws unrarError;
+  const bool complete = olsunrar::listEntries(path, [&](const olsunrar::EntryInfo& e) {
+    fb.allNames.push_back(e.nameUtf8);
+    if (!e.directory && endsWithOlsName(e.nameUtf8)) fb.projects.push_back({e.index, e.nameUtf8, e.unpackedSize, e.encrypted});
+  }, lr, unrarError);
+  if (lr.volume) { error = parserError + L" Multi-volume RAR sets are not supported."; return false; }
+  if (lr.entries == 0) { error = parserError + (unrarError.empty() ? ws() : L" UnRAR: " + unrarError); return false; }
+  fb.rar.solid = lr.solid;
+  fb.unrarListing = true;
+  fb.problem = L"Read-only (listed by UnRAR; renaming inside this archive is disabled). Header check: " + parserError;
+  if (!complete) fb.problem += L" UnRAR stopped after " + std::to_wstring(lr.entries) + L" entries: " + unrarError;
+  out = std::move(fb);
+  return true;
+}
+
 // RAR: one sequential pass through the archive (solid archives must be decoded
 // in order). Results are delivered per project through `done`.
 inline bool analyzeRarProjects(const ws& archivePath, const ArchiveListing& listing,
@@ -197,10 +228,8 @@ inline ws partPath(const ws& target) { return target + L".olsrenamer-part"; }
 // rewritten since the scan). projectMap[oldProject] = new project or npos.
 inline bool refreshListing(ArchiveFileOps& ops, const ws& archivePath, const ArchiveListing& old,
                            ArchiveListing& fresh, std::vector<size_t>& projectMap, ws& error) {
-  auto src = ops.openRead(archivePath);
-  if (!src) { error = L"Cannot open the archive."; return false; }
   fresh = ArchiveListing();
-  if (!listArchive(*src, old.kind, fresh, error)) return false;
+  if (!listArchiveFile(ops, archivePath, old.kind, fresh, error)) return false;
   std::map<size_t, size_t> byEntry;
   for (size_t i = 0; i < fresh.projects.size(); ++i) byEntry[fresh.projects[i].index] = i;
   projectMap.assign(old.projects.size(), (size_t)-1);
