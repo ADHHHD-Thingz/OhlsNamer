@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.5
+
+- **"DAMOS" is never put into a file name.** The word is removed from every name source (make, model, type, engine code, ECU, software, hardware number, the source filename) and from original filename stems that are kept in brackets. It is removed in every spelling found in the corpus: `Damos`, `(DAMOS)`, `2.0D - DAMOS`, `damos35d`, `BMWedc15damos`, `Z-DAMOS`. A field that held only "Damos" counts as empty, so the next field is used instead (make `Damos` with model `Ford Raptor` gives brand Ford). Across the 365-project audit corpus, proposed names containing "damos" went from 32 to 0.
+- **Map rejection.** More WinOLS-generated labels are no longer counted as named maps:
+  - Type labels with a part index and/or warning marker: `Map "Denso 8" [2/3]`, `Kennfeld "Denso 16" [3/3] (!)`. In the new Toyota Hilux fixtures, all 48 and 68 "named" maps were these labels; both now count 0.
+  - The DAMOS layout label `Kennfeld "Damos 8"`.
+  - Labels with real words after the quotes (`Map "..." Optimale Beschleunigung`) are still counted. Across 3.43 million map records, exactly these 118 verdicts changed.
+- **ECU identification.**
+  - The ECU family named in the original project filename is used before other project text, and its file extension is dropped: `EDC15P.ols` → `EDC15P`, `ms43.ols` → `MS43`, `BMW ME9.ols` → `ME9`. The text's fuller spelling of the same family is kept (`MED17.3.3`, not `MED1733`).
+  - Siemens MS4x families (MS41/42/43/45) are recognised, so `100017090 2.ols` is now named `MS43 [100017090 2] (24).ols` instead of `OLS Project …`.
+  - Placeholder values (`unknow`, `unkown`, `unbekannt`, `n/a`, `none`, …) count as missing, so the hardware number is used instead.
+  - Separator-free hex blobs ending in `.DAT`/`.BIN` are no longer taken as source filenames.
+  - The same ECU written two ways is no longer repeated in a name (`MSD85 MSD 85`).
+- New fixtures added to the CI map-count audit: `0281010744` (3456), `100017090 2` (24), both Hilux (0), `WinOLS (371226 )` (693), `zafira2.0turbo` (3125).
+
 ## 1.5.4
 
 - **RAR archives the header check refuses are now read through UnRAR.** Errors such as "Bad RAR5 header size" or a header CRC mismatch used to drop the whole archive. Now the archive is listed through UnRAR instead, and every project UnRAR can reach is scanned, counted and extractable. Renaming inside such an archive is disabled (read-only), and the original is never modified.

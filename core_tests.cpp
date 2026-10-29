@@ -482,5 +482,31 @@ int main() {
     if (!result.headerComplete) assert(!result.renameSafe);
   }
 
+  // 1.5.5: DAMOS never appears in names; WinOLS part-index type labels; placeholders.
+  assert(stripDamos(L"Damos") == L"");
+  assert(stripDamos(L"(DAMOS)") == L"");
+  assert(stripDamos(L"2.0D - DAMOS") == L"2.0D");
+  assert(stripDamos(L"E60/E61 damos35d") == L"E60/E61 35d");
+  assert(stripDamos(L"BMWedc15damos") == L"BMWedc15");
+  assert(stripDamos(L"Z-DAMOS") == L"Z");
+  assert(stripDamos(L"2.0T (DAMOS)") == L"2.0T");
+  assert(stripDamos(L"Golf 4 TDI") == L"Golf 4 TDI");
+  {
+    const ws name = proposedFilename(L"Damos", L"E65 damos", L"DDE6.3", L"DAMOS", 12);
+    assert(lower(name).find(L"damos") == ws::npos && name == L"E65 DDE6.3 (12).ols");
+  }
+  assert(isPlaceholderLabel(L"Map \"Denso 8\" [2/3]"));
+  assert(isPlaceholderLabel(L"Kennfeld \"Denso 16\" [3/3] (!)"));
+  assert(isPlaceholderLabel(L"Kennfeld \"Denso Vertikal 16\" [4/4] (!)"));
+  assert(isPlaceholderLabel(L"Kennfeld \"Damos 8\""));
+  assert(!isPlaceholderLabel(L"Map \"Denso 8\" Optimale Beschleunigung"));
+  assert(!isPlaceholderLabel(L"Map \"Denso 8\" [Boost]"));
+  assert(isUnknownNamePart(L"unknow") && isUnknownNamePart(L"N/A") && isUnknownNamePart(L"Unbekannt"));
+  assert(!isUnknownNamePart(L"NA") && !isUnknownNamePart(L"76F"));
+  assert(ecuFamilyFromName(L"EDC15P.ols") == L"EDC15P");
+  assert(ecuFamilyFromName(L"BMW ME9.ols") == L"ME9");
+  assert(ecuFamilyFromName(L"ms43.ols") == L"MS43");
+  assert(ecuFamilyFromName(L"Meine Datei.ols").empty());
+
   std::cout<<"core regression checks passed\n";
 }

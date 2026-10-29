@@ -1,4 +1,4 @@
-# OhlsNamer (OLS Renamer) — v1.5.4
+# OhlsNamer (OLS Renamer) — v1.5.5
 
 A small Win32 GUI tool that renames WinOLS `.ols` project files based on the metadata stored in their header.
 
@@ -14,7 +14,7 @@ For example: `BMW 320d EDC17C50 03G906016 (42).ols`
 - Normalizes common vehicle-brand and ECU-manufacturer aliases while preserving unknown values
 - Uses an embedded source HEX/BIN filename when software metadata is missing or generic
 - Counts defined (named, non-placeholder) maps
-- Proposes clean, filesystem-safe names
+- Proposes clean, filesystem-safe names; the word "DAMOS" (in any field, case or spelling such as `(DAMOS)` or `damos35d`) is never put into a name
 - Disambiguates collisions inside each folder
 - Keeps malformed headers and unvalidated map structures review-only; partial-identity proposals omit unknown placeholders and retain the original filename stem
 - Renames in-place with a multi-pass algorithm that handles swaps and cycles via temporary names
@@ -69,6 +69,12 @@ Measured on the 332-project corpus (AI-Dump `definitions/ols` + repository fixtu
 | Bytes read | 3.16 GB | 2.93 GB |
 
 Results with 1, 2 and 16 workers, and with prefix loading versus full reads, are byte-for-byte identical. The 16-worker figure on a 7800X3D was not benchmarked here (the test machine has 2 cores); expect scaling close to the physical core count.
+
+## Version 1.5.5
+
+- "DAMOS" is removed from every name part, and from kept old filename stems.
+- WinOLS part-index type labels such as `Map "Denso 8" [2/3]` and `Kennfeld "Denso 16" [3/3] (!)`, and `Kennfeld "Damos 8"`, are no longer counted as named maps.
+- Better ECU identification: the ECU named in the original filename (`EDC15P.ols`, `ms43.ols`, `BMW ME9.ols`), Siemens MS4x families, placeholder values such as "unknow", and the brand written in the model field (`Ford Raptor`).
 
 ## Version 1.5.4
 

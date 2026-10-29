@@ -59,6 +59,12 @@ jobs:
             ["Nissan Navara Denso 16 E311U4D (2).ols"]=0
             ["Subaru Impreza Denso 8 (3).ols"]=0
             ["Volvo C70 EDC16C31 (1).ols"]=0
+            ["0281010744.ols"]=3456
+            ["100017090 2.ols"]=24
+            ["Toyota Hilux 76F f0504 (48).ols"]=0
+            ["Toyota Hilux unknow F0445 (68).ols"]=0
+            ["WinOLS (371226 ).ols"]=693
+            ["zafira2.0turbo.ols"]=3125
           )
           for f in "${files[@]}"; do
             base=${f##*/}

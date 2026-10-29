@@ -297,7 +297,9 @@ inline bool isTypeVocabularyOnly(const ws& lowered, size_t from, size_t to) {
       L"i", L"ii", L"iii", L"iv", L"v", L"vi", L"vii", L"viii", L"ix", L"x", L"vertikal",
       L"vertical", L"horizontal", L"float", L"double", L"bit", L"bits", L"signed", L"unsigned",
       L"lohi", L"hilo", L"big", L"little", L"endian", L"statistical", L"statistisch",
-      L"statistische", L"statistich", L"statistic", L"statistics"};
+      L"statistische", L"statistich", L"statistic", L"statistics",
+      // Layout labels WinOLS gives DAMOS/A2L-imported maps: Kennfeld "Damos 8".
+      L"damos", L"a2l", L"asap", L"asap2"};
   ws token;
   bool meaningful = false;
   auto flush = [&]() {
@@ -327,9 +329,22 @@ inline bool isQuotedTypeLabel(const ws& lowered) {
   const wchar_t quote = lowered[q];
   const size_t close = lowered.find(quote, q + 1);
   if (close == ws::npos) return false;
-  ws tail = lowered.substr(close + 1);
-  for (wchar_t c : tail)
-    if (c != L' ' && c != L'(' && c != L')' && c != L'!') return false;
+  // Allowed after the quotes: WinOLS markers only, i.e. "(!)" and a part index
+  // such as "[2/3]" or "[4]" (Map "Denso 8" [2/3], Kennfeld "Denso 16" [3/3] (!)).
+  const ws tail = lowered.substr(close + 1);
+  for (size_t i = 0; i < tail.size(); ++i) {
+    const wchar_t c = tail[i];
+    if (c == L' ' || c == L'(' || c == L')' || c == L'!') continue;
+    if (c != L'[') return false;
+    size_t j = i + 1;
+    bool digits = false;
+    while (j < tail.size() && ((tail[j] >= L'0' && tail[j] <= L'9') || tail[j] == L'/' || tail[j] == L' ')) {
+      digits = digits || (tail[j] >= L'0' && tail[j] <= L'9');
+      ++j;
+    }
+    if (!digits || j >= tail.size() || tail[j] != L']') return false;
+    i = j;
+  }
   return isTypeVocabularyOnly(lowered, q + 1, close);
 }
 
@@ -764,17 +779,82 @@ inline ws filenamePart(const ws& raw) {
   return cleaned.empty() ? ws(L"Unknown") : cleaned;
 }
 
+inline bool isUnknownNamePart(const ws& raw);
 inline ws firstFilled(const std::vector<ws>& values) {
   for (const ws& v : values) {
     ws t = jsTrim(removeNul(v));
-    if (!t.empty() && t != L"-" && t != L"?" && t != L"%") return t;
+    if (!isUnknownNamePart(t)) return t;  // skips "", "-", "?", "unknow", "n/a", ...
   }
   return L"";
 }
 
 inline bool isUnknownNamePart(const ws& raw) {
   ws value = lower(jsTrim(removeNul(raw)));
-  return value.empty() || value == L"unknown" || value == L"-" || value == L"?" || value == L"%";
+  static const std::set<ws> placeholders = {
+      L"", L"unknown", L"unknow", L"unkown", L"unknwon", L"unknonw", L"unbekannt", L"inconnu",
+      L"desconocido", L"sconosciuto", L"n/a", L"n.a.", L"none", L"not identified",
+      L"not available", L"-", L"--", L"?", L"??", L"???", L"%"};
+  return placeholders.count(value) != 0;
+}
+
+// Letters and digits only, lower-cased: "MSD 85" == "MSD85" == "msd-85".
+inline ws alnumKey(const ws& s) {
+  ws k;
+  for (wchar_t c : s) {
+    if (c >= L'A' && c <= L'Z') k += (wchar_t)(c + 32);
+    else if ((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9')) k += c;
+  }
+  return k;
+}
+
+// "DAMOS" (Bosch/Siemens calibration description files) says how the project
+// was built, not what it is, so it never appears in a proposed file name.
+// Removes the word wherever it occurs ("Damos", "(DAMOS)", "2.0D - DAMOS",
+// "damos35d", "BMWedc15damos", "Z-DAMOS") and tidies what is left; a part
+// that held nothing else becomes empty.
+inline ws stripDamos(const ws& raw) {
+  ws s = raw;
+  for (;;) {
+    const ws low = lower(s);
+    const size_t at = low.find(L"damos");
+    if (at == ws::npos) break;
+    s.erase(at, 5);
+  }
+  if (s.size() == raw.size()) return raw;
+  // Brackets that are now empty, then separators left dangling at either end.
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (const wchar_t* pair : {L"()", L"[]", L"{}"}) {
+      for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != pair[0]) continue;
+        size_t j = i + 1;
+        while (j < s.size() && (s[j] == L' ' || s[j] == L'-' || s[j] == L'_' || s[j] == L',')) ++j;
+        if (j < s.size() && s[j] == pair[1]) { s.erase(i, j - i + 1); changed = true; break; }
+      }
+    }
+  }
+  ws out;
+  bool space = false;
+  for (wchar_t c : s) {
+    if (isJsSpace(c) || c == L'_') { space = true; continue; }
+    if (space && !out.empty()) out += L' ';
+    space = false;
+    out += c;
+  }
+  auto sep = [](wchar_t c) {
+    return c == L' ' || c == L'-' || c == L',' || c == L';' || c == L':' || c == L'/' || c == L'?' ||
+           c == L'.' || c == L'+' || c == L'&';
+  };
+  size_t a = 0, b = out.size();
+  while (a < b && sep(out[a])) ++a;
+  while (b > a && sep(out[b - 1])) --b;
+  out = out.substr(a, b - a);
+  // " - " or " , " left in the middle by "2.0D - DAMOS Stage" style text.
+  for (const wchar_t* pat : {L" - - ", L" , ", L" -  "}) {
+    size_t at;
+    while ((at = out.find(pat)) != ws::npos) out.replace(at, wcslen(pat), L" ");
+  }
+  return out;
 }
 
 // Standard OBD-II diagnostic trouble codes (P0420, C0035, B1234, U0100, and
@@ -790,7 +870,8 @@ inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, cons
   ws prefix;
   std::set<ws> seenParts;
   std::vector<ws> priorParts;
-  auto appendPart = [&](const ws& raw) {
+  auto appendPart = [&](const ws& rawPart) {
+    const ws raw = stripDamos(rawPart);
     if (isUnknownNamePart(raw)) return;
     // Diagnostic trouble codes are never useful filename identity.
     if (isDtcCode(raw)) return;
@@ -837,6 +918,9 @@ inline ws proposedFilename(const ws& brand, const ws& model, const ws& ecu, cons
     // Compare normalized words, so separators/case changes cannot duplicate a slot.
     ws key = catalogNorm(part);
     if (key.empty() || seenParts.count(key)) return;
+    // Same token written differently ("MSD85" then "MSD 85").
+    for (const ws& prior : priorParts)
+      if (alnumKey(prior) == alnumKey(part)) return;
     // Avoid adding a shorter slot already present as a complete phrase in the name.
     ws prefixKey = L" " + catalogNorm(prefix) + L" ";
     ws phrase = L" " + key + L" ";
@@ -1773,6 +1857,19 @@ inline void collectEmbeddedHexCandidates(const uint8_t* d, size_t n, bool romStr
         }
         ws stem=softwareStemFromSourceFilename(base);
         if(stem.empty())continue;
+        // Binary data that happens to end in ".DAT"/".BIN": a run of 24+ hex
+        // digits is not a filename anyone typed (real ones: 1037362706_1468.org).
+        {
+          size_t hexRun=0,longest=0;
+          for(wchar_t c:stem){
+            const bool hx=(c>=L'0'&&c<=L'9')||(c>=L'a'&&c<=L'f')||(c>=L'A'&&c<=L'F');
+            hexRun=hx?hexRun+1:0;longest=std::max(longest,hexRun);
+          }
+          // "389851_<md5>.bin" (production number + hash) is a real name; only
+          // separator-free hex blobs are rejected.
+          const bool separated=stem.find_first_of(L"_- ")!=ws::npos;
+          if(longest>=48||(longest>=24&&!separated))continue;
+        }
         int score=1+(stem.find_first_of(L"0123456789")!=ws::npos?2:0)+
           (stem.find_first_of(L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")!=ws::npos?1:0);
         ws prefix=lower(run.substr(0,b));
@@ -1858,10 +1955,10 @@ inline void collectEcuFamilyHits(const uint8_t* d, size_t n, size_t offsetBase,
   // Temic, Kefico, Transtron) are not families. A digit must follow the
   // prefix (optionally after one separator) so short prefixes such as ME
   // cannot match prose or random tokens such as "Me-b1G".
-  static const std::wregex re(LR"(\b(?:ME|MED|EDC|DCM|SID|SIMOS|MD1|MG1|EMS|PCR|PSG|DCU|MSS|DDE|MSD|MSV|MJD|IAW|MOTRONIC)\s*[-.]?\s*\d[A-Z0-9.]{0,12}(?:[.-][A-Z0-9]{1,8}){0,2}\b)",std::regex::ECMAScript|std::regex::icase);
+  static const std::wregex re(LR"(\b(?:ME|MED|EDC|DCM|SID|SIMOS|MD1|MG1|EMS|PCR|PSG|DCU|MSS|DDE|MSD|MSV|MJD|IAW|MOTRONIC|MS4)\s*[-.]?\s*\d[A-Z0-9.]{0,12}(?:[.-][A-Z0-9]{1,8}){0,2}\b)",std::regex::ECMAScript|std::regex::icase);
   static const char* const prefixes[] = {"ME", "MED", "EDC", "DCM", "SID", "SIMOS", "MD1", "MG1", "EMS",
                                          "PCR", "PSG", "DCU", "MSS", "DDE", "MSD", "MSV", "MJD", "IAW",
-                                         "MOTRONIC"};
+                                         "MOTRONIC", "MS4"};
   // NUL bytes are dropped by decode(); work on the compacted byte stream.
   std::string text;
   text.reserve(n);
@@ -1899,6 +1996,17 @@ inline void collectEcuFamilyHits(const uint8_t* d, size_t n, size_t offsetBase,
     resumeAt = i + (size_t)match.length(0);
     if (match.length(0) == 0) resumeAt = i + 1;
     ws x = jsTrim(match[0].str());
+    // A source filename such as "EDC15P.ols" matches with its extension; cut
+    // trailing ".<letters>" segments (families only have digits after dots,
+    // e.g. ME7.5.10, MED17.7.2).
+    for (size_t dot = x.rfind(L'.'); dot != ws::npos && dot > 0; dot = x.rfind(L'.')) {
+      const ws ext = x.substr(dot + 1);
+      const bool letters = ext.size() >= 2 && std::all_of(ext.begin(), ext.end(), [](wchar_t c) {
+        return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
+      });
+      if (!letters) break;
+      x.resize(dot);
+    }
     // Reject alphabetic prose such as German "Meine", which can match the "ME" prefix.
     if(x.size()<4||x.size()>32||x.find_first_of(L"0123456789")==ws::npos)continue;
     // Short ME-family hits with a digit immediately followed by a letter
@@ -1927,7 +2035,7 @@ inline void collectEcuFamilyHits(const uint8_t* d, size_t n, size_t offsetBase,
     int score=10;
     if(nrm.find(L'.')!=ws::npos)score+=4;
     if(nrm.find(L'-')!=ws::npos)score+=1;
-    static const std::vector<ws> fp={L"motronic",L"simos",L"med",L"edc",L"dcm",L"sid",L"md1",L"mg1",L"ems",L"pcr",L"psg",L"dcu",L"mss",L"dde",L"msd",L"msv",L"mjd",L"iaw",L"me"};
+    static const std::vector<ws> fp={L"motronic",L"simos",L"med",L"edc",L"dcm",L"sid",L"md1",L"mg1",L"ems",L"pcr",L"psg",L"dcu",L"mss",L"dde",L"msd",L"msv",L"mjd",L"iaw",L"ms4",L"me"};
     for(const auto& prefix:fp)if(nrm.rfind(prefix,0)==0){score+=(int)prefix.size();break;}
     hits.push_back({x,offsetBase+i,score});
   }
@@ -1944,6 +2052,29 @@ inline ws inferEcuFamily(const uint8_t* d,size_t n) {
   std::vector<FamilyHit> hits;
   collectEcuFamilyHits(d,n,0,false,hits);
   return bestEcuFamily(hits);
+}
+// ECU family named in a short metadata string such as the original project
+// filename ("EDC15P.ols", "BMW ME9.ols", "ms43.ols"). The user typed it, so it
+// outranks family-looking text elsewhere in the project (pasted notes, web
+// pages). An all-lower-case hit is printed in capitals ("ms43" -> "MS43").
+inline ws ecuFamilyFromName(const ws& name) {
+  std::string bytes;
+  for (wchar_t c : name) bytes += (c > 0 && c < 0x100) ? (char)c : ' ';
+  std::vector<FamilyHit> hits;
+  collectEcuFamilyHits(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), 0, false, hits);
+  ws v = bestEcuFamily(hits);
+  if (v.empty()) {
+    // Three-character Motronic families (ME7, ME9) are below the general
+    // scanner's minimum length; accept them only in a filename.
+    static const std::wregex shortMe(LR"((?:^|[^A-Za-z0-9])(ME[0-9])(?=$|[^A-Za-z0-9.]|\.[A-Za-z]))",
+                                     std::regex::ECMAScript | std::regex::icase);
+    std::wsmatch m;
+    if (std::regex_search(name, m, shortMe)) v = m[1].str();
+  }
+  bool upper = false;
+  for (wchar_t c : v) if (c >= L'A' && c <= L'Z') upper = true;
+  if (!upper) for (auto& c : v) if (c >= L'a' && c <= L'z') c = (wchar_t)(c - 32);
+  return v;
 }
 // Map/ID area first, then the first embedded ROM image (strict upper-case prefix).
 inline ws inferEcuFamily(const uint8_t* d,size_t headerEnd,size_t romBegin,size_t romEnd) {
@@ -1977,7 +2108,13 @@ inline Analysis analyzeOls(const uint8_t* d, size_t loaded, uint64_t fileSize) {
   a.formatSizeConsistent=!modern||rd32(d,20)==fileSize;
   if(!a.formatSizeConsistent)a.warnings.push_back(L"Header size does not match file size; automatic renaming is disabled.");
   Meta meta=parseMetadata(d,n,modern?0x18:0x14,formatVersion,a.warnings);
-  auto get=[&](const char*k){auto it=meta.find(k);return it==meta.end()?ws():it->second;};
+  auto getRaw=[&](const char*k){auto it=meta.find(k);return it==meta.end()?ws():it->second;};
+  // Identity fields never carry "DAMOS" into names (see stripDamos).
+  auto get=[&](const char*k){
+    static const std::set<std::string> identity={"make","model","type","engine_code","ecu_name","sw_number","hw_number","original_file_name"};
+    ws v=getRaw(k);
+    return identity.count(k)?stripDamos(v):v;
+  };
   a.headerComplete=get("__header_complete")==L"1";
   if(!a.headerComplete)a.warnings.push_back(L"Required metadata header is incomplete.");
   for(const auto& kv:meta) {
@@ -2009,9 +2146,31 @@ inline Analysis analyzeOls(const uint8_t* d, size_t loaded, uint64_t fileSize) {
   ws embedded=selectSourceFilename(original,scannedSource);
   ws rawBrand=firstFilled({get("make")});
   ws inferredBrand=rawBrand.empty()?inferVehicleBrandFromText(embedded):ws(L"Unknown");
+  // An empty make field ("Damos" removed, or never filled) with the brand
+  // written in the model or type field: model "Ford Raptor".
+  if(rawBrand.empty()&&(inferredBrand.empty()||inferredBrand==L"Unknown")){
+    for(const char* k:{"model","type"}){
+      ws fromField=inferVehicleBrandFromText(get(k));
+      if(!fromField.empty()&&fromField!=L"Unknown"){inferredBrand=fromField;break;}
+    }
+  }
   ws brand=!rawBrand.empty()?normalizeVehicleBrand(rawBrand):(!inferredBrand.empty()&&inferredBrand!=L"Unknown"?inferredBrand:ws(L"Unknown"));
   ws model=firstFilled({get("model"),get("type"),get("engine_code")});if(model.empty())model=L"Unknown";
-  ws explicitEcu=firstFilled({get("ecu_name")});ws inferredEcu=explicitEcu.empty()?scanFamily():ws();
+  ws explicitEcu=firstFilled({get("ecu_name")});
+  ws inferredEcu;
+  if(explicitEcu.empty()){
+    // The filename's family wins over other project text, but when the text
+    // spells the same family more fully (MED1733 vs MED17.3.3) use that form.
+    const ws fromName=ecuFamilyFromName(original), fromText=scanFamily();
+    inferredEcu=fromName;
+    if(fromName.empty())inferredEcu=fromText;
+    else if(alnumKey(fromName)==alnumKey(fromText)){
+      const bool textDots=fromText.find(L'.')!=ws::npos, nameDots=fromName.find(L'.')!=ws::npos;
+      const bool nameSpace=fromName.find(L' ')!=ws::npos, textSpace=fromText.find(L' ')!=ws::npos;
+      if(textDots&&!nameDots)inferredEcu=fromText;          // MED1733 -> MED17.3.3
+      else if(nameSpace&&!textSpace)inferredEcu=fromText;   // MSD 85 -> MSD85
+    }
+  }
   ws ecu=!explicitEcu.empty()?explicitEcu:(!inferredEcu.empty()?inferredEcu:ws(L"Unknown"));
   // When no ECU family is known, the hardware number is a useful identity
   // token (e.g. Bosch 038906012L, Denso 89663-26432). Prefer it over leaving
@@ -2052,9 +2211,9 @@ inline Analysis analyzeOls(const uint8_t* d, size_t loaded, uint64_t fileSize) {
   }
   Candidate ex=extractMaps(d,n,formatVersion,versionDirectory,a.versionDirectoryValid,a.warnings);
   a.ok=true;a.formatVersion=formatVersion;a.brand=brand;a.model=model;a.ecu=ecu;a.software=software;
-  a.ecuManufacturer=ecuManufacturer;a.brandSource=!rawBrand.empty()?L"metadata":(inferredBrand!=L"Unknown"?L"inferred from source filename":L"unknown");
+  a.ecuManufacturer=ecuManufacturer;a.brandSource=!rawBrand.empty()?L"metadata":(inferredBrand!=L"Unknown"?L"inferred from source filename or model text":L"unknown");
   a.hardwareNumber=get("hw_number");a.productionNumber=get("production_no");
-  a.engineCode=get("engine_code");a.vehicleYear=get("year");a.originalFileName=original;a.embeddedHexFilename=embedded;
+  a.engineCode=get("engine_code");a.vehicleYear=get("year");a.originalFileName=getRaw("original_file_name");a.embeddedHexFilename=embedded;
   a.softwareSource=software.empty()?L"unknown":(useFallback?L"embedded hex filename":L"metadata");
   a.ecuSource=!explicitEcu.empty()?L"metadata":(!inferredEcu.empty()?L"inferred from project text":(!isUnknownNamePart(ecu)?L"hardware number":L"unknown"));
   a.mapCount=ex.maps.size();
@@ -2088,7 +2247,7 @@ inline ws finalProposedName(const Analysis& a, const ws& currentName) {
   ws originalStem = currentName;
   if (originalStem.size() >= 4 && lower(originalStem.substr(originalStem.size() - 4)) == L".ols")
     originalStem.resize(originalStem.size() - 4);
-  ws normalizedOriginal = lower(jsTrim(originalStem));
+  ws normalizedOriginal = lower(jsTrim(stripDamos(originalStem)));
   if (normalizedOriginal.empty() || normalizedOriginal == L"project" ||
       normalizedOriginal == L"unknown" || normalizedOriginal == L"ols project" ||
       normalizedOriginal == L"untitled" || normalizedOriginal == L"new project")
@@ -2116,7 +2275,9 @@ inline ws finalProposedName(const Analysis& a, const ws& currentName) {
       if (count) originalStem.resize(open);
     }
   }
-  ws fallback = filenamePart(originalStem);
+  ws fallback = stripDamos(originalStem);
+  if (isUnknownNamePart(fallback)) return a.proposed;
+  fallback = filenamePart(fallback);
   if (fallback.empty()) return a.proposed;
   // Already "<base> [<old stem>]" from an earlier run: keep it as it is.
   const ws lowBase = lower(base), lowFallback = lower(fallback);
